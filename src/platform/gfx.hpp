@@ -7,10 +7,11 @@
 
 namespace betty::platform {
 
-// Forward declarations (definitions in window.hpp / this header)
+// Forward declarations (definitions in window.hpp / text.hpp / this header)
 struct win32_window;
 struct d3d_swap_chain;
 struct d3d_render_target_view;
+struct glyph_renderer;
 
 // --- swap_chain_settings ---------------------------------------------------
 
@@ -46,6 +47,9 @@ private:
     -> std::expected<d3d_swap_chain, std::error_code>;
   friend auto make_render_target_view(d3d_device const&, d3d_swap_chain const&)
     -> std::expected<d3d_render_target_view, std::error_code>;
+  friend struct glyph_renderer;  // needs impl_->context for drawing
+  friend auto make_glyph_renderer(d3d_device const&, window_dimensions const&)
+    -> std::expected<glyph_renderer, std::error_code>;  // needs impl_->device / context
 };
 
 auto make_device() -> std::expected<d3d_device, std::error_code>;
@@ -99,6 +103,7 @@ private:
   friend auto make_render_target_view(d3d_device const&, d3d_swap_chain const&)
     -> std::expected<d3d_render_target_view, std::error_code>;
   friend struct d3d_device;  // needs impl_->rtv for OMSetRenderTargets / ClearRenderTargetView
+  friend struct glyph_renderer;  // needs impl_->rtv for OMSetRenderTargets
 };
 
 auto make_render_target_view(d3d_device const& device, d3d_swap_chain const& swap_chain)

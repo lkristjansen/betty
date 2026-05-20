@@ -5,6 +5,7 @@
 #include "platform/types.hpp"
 #include "platform/window.hpp"
 #include "platform/gfx.hpp"
+#include "platform/text.hpp"
 
 namespace platform = betty::platform;
 
@@ -66,9 +67,24 @@ int main() {
   }
   auto& rtv = *rtv_result;
 
-  // 5. Message loop (render on idle)
+  // 5. Create glyph renderer
+  auto renderer_result = platform::make_glyph_renderer(
+    device,
+    platform::window_dimensions{
+      platform::default_window_size.width,
+      platform::default_window_size.height
+    }
+  );
+  if (!renderer_result) {
+    log_error(renderer_result.error(), "create glyph renderer");
+    return 1;
+  }
+  auto& renderer = *renderer_result;
+
+  // 6. Message loop (render on idle)
   while (platform::dispatch_pending_messages()) {
     device.clear(rtv, platform::mocha_base);
+    renderer.draw(device, rtv, "betty");
     auto present_result = swap_chain.present();
     if (!present_result) {
       log_error(present_result.error(), "present");

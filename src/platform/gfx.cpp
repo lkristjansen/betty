@@ -1,32 +1,11 @@
 #include "gfx.hpp"
+#include "gfx_impl.hpp"
 #include "window.hpp"
 #include "error.hpp"
-#define WIN32_LEAN_AND_MEAN
-#define NOMINMAX
-#include <d3d11.h>
-#include <dxgi1_3.h>
-#include <wrl/client.h>
 
 using Microsoft::WRL::ComPtr;
 
 namespace betty::platform {
-
-// ===========================================================================
-// PIMPL definitions (private to this translation unit)
-// ===========================================================================
-
-struct d3d_device::impl {
-  ComPtr<ID3D11Device> device;
-  ComPtr<ID3D11DeviceContext> context;
-};
-
-struct d3d_swap_chain::impl {
-  ComPtr<IDXGISwapChain1> swap_chain;
-};
-
-struct d3d_render_target_view::impl {
-  ComPtr<ID3D11RenderTargetView> rtv;
-};
 
 // ===========================================================================
 // d3d_device
