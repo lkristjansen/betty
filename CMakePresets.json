@@ -1,0 +1,51 @@
+{
+    "version": 6,
+    "configurePresets": [
+        {
+            "name": "debug",
+            "displayName": "Debug",
+            "generator": "Visual Studio 18 2026",
+            "binaryDir": "${sourceDir}/build/debug",
+            "cacheVariables": {
+                "CMAKE_SYSTEM_VERSION": "10.0.19041.0"
+            }
+        },
+        {
+            "name": "release",
+            "displayName": "Release",
+            "generator": "Visual Studio 18 2026",
+            "binaryDir": "${sourceDir}/build/release",
+            "cacheVariables": {
+                "CMAKE_SYSTEM_VERSION": "10.0.19041.0"
+            }
+        }
+    ],
+    "buildPresets": [
+        {
+            "name": "debug",
+            "displayName": "Build Debug",
+            "configurePreset": "debug",
+            "configuration": "Debug"
+        },
+        {
+            "name": "release",
+            "displayName": "Build Release",
+            "configurePreset": "release",
+            "configuration": "Release"
+        }
+    ],
+    "packagePresets": [
+        {
+            "name": "debug",
+            "displayName": "Package Debug",
+            "configurePreset": "debug",
+            "configurations": ["Debug"]
+        },
+        {
+            "name": "release",
+            "displayName": "Package Release",
+            "configurePreset": "release",
+            "configurations": ["Release"]
+        }
+    ]
+}
