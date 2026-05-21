@@ -2,6 +2,7 @@
 #include <cstdint>
 #include <expected>
 #include <memory>
+#include <span>
 #include <string_view>
 #include <system_error>
 #include "types.hpp"
@@ -23,9 +24,10 @@ struct glyph_renderer {
 
   // Draw the given text at cell position (col=0, row=0).
   // Rebinds the RTV before drawing (the caller must pass the current RTV).
-  auto draw(d3d_device const& device, d3d_render_target_view const& rtv, std::string_view text) const -> void;
+  // Returns an error if the vertex buffer cannot be mapped (e.g. device removed).
+  [[nodiscard]] auto draw(d3d_device const& device, d3d_render_target_view const& rtv,
+                          std::span<const char> text) const -> std::expected<void, std::error_code>;
 
-  glyph_renderer() = default;
   ~glyph_renderer();
   glyph_renderer(glyph_renderer&&) noexcept;
   glyph_renderer& operator=(glyph_renderer&&) noexcept;
@@ -33,6 +35,9 @@ struct glyph_renderer {
   glyph_renderer& operator=(glyph_renderer const&) = delete;
 
 private:
+  struct empty_tag {};
+  explicit glyph_renderer(empty_tag) noexcept;
+
   struct impl;
   std::unique_ptr<impl> impl_;
 
@@ -44,7 +49,7 @@ private:
 
 // Creates the glyph renderer. The device is needed for texture/buffer creation.
 // The window dimensions are used for the constant buffer's orthographic transform.
-auto make_glyph_renderer(d3d_device const& device, window_dimensions const& window_size)
+[[nodiscard]] auto make_glyph_renderer(d3d_device const& device, window_dimensions const& window_size)
   -> std::expected<glyph_renderer, std::error_code>;
 
 } // namespace betty::platform

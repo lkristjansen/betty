@@ -14,10 +14,11 @@ namespace betty::platform {
 d3d_device::~d3d_device() = default;
 d3d_device::d3d_device(d3d_device&&) noexcept = default;
 d3d_device& d3d_device::operator=(d3d_device&&) noexcept = default;
+d3d_device::d3d_device(empty_tag) noexcept {}
 
 void d3d_device::clear(d3d_render_target_view const& rtv, rgba_color const& color) const {
   impl_->context->OMSetRenderTargets(1, rtv.impl_->rtv.GetAddressOf(), nullptr);
-  impl_->context->ClearRenderTargetView(rtv.impl_->rtv.Get(), &color.r);
+  impl_->context->ClearRenderTargetView(rtv.impl_->rtv.Get(), color.data());
 }
 
 auto make_device() -> std::expected<d3d_device, std::error_code> {
@@ -52,7 +53,7 @@ auto make_device() -> std::expected<d3d_device, std::error_code> {
     return std::unexpected(make_d3d_error(hr));
   }
 
-  d3d_device result;
+  d3d_device result{ d3d_device::empty_tag{} };
   result.impl_ = std::make_unique<d3d_device::impl>();
   result.impl_->device = std::move(device);
   result.impl_->context = std::move(context);
@@ -66,6 +67,7 @@ auto make_device() -> std::expected<d3d_device, std::error_code> {
 d3d_swap_chain::~d3d_swap_chain() = default;
 d3d_swap_chain::d3d_swap_chain(d3d_swap_chain&&) noexcept = default;
 d3d_swap_chain& d3d_swap_chain::operator=(d3d_swap_chain&&) noexcept = default;
+d3d_swap_chain::d3d_swap_chain(empty_tag) noexcept {}
 
 auto d3d_swap_chain::present() const -> std::expected<void, std::error_code> {
   HRESULT hr = impl_->swap_chain->Present(1, 0);  // vsync on
@@ -75,7 +77,8 @@ auto d3d_swap_chain::present() const -> std::expected<void, std::error_code> {
   return {};
 }
 
-auto make_swap_chain(d3d_device const& device, win32_window const& window, swap_chain_settings const& settings)
+auto make_swap_chain(d3d_device const& device, win32_window const& window,
+                     swap_chain_settings const& settings)
   -> std::expected<d3d_swap_chain, std::error_code> {
 
   // 1. Create DXGI factory
@@ -89,8 +92,8 @@ auto make_swap_chain(d3d_device const& device, win32_window const& window, swap_
 
   // 2. Describe swap chain
   DXGI_SWAP_CHAIN_DESC1 desc{};
-  desc.Width = settings.width;
-  desc.Height = settings.height;
+  desc.Width = settings.size.width;
+  desc.Height = settings.size.height;
   desc.Format = DXGI_FORMAT_R8G8B8A8_UNORM;
   desc.Stereo = FALSE;
   desc.SampleDesc.Count = 1;
@@ -106,7 +109,7 @@ auto make_swap_chain(d3d_device const& device, win32_window const& window, swap_
   ComPtr<IDXGISwapChain1> swap_chain;
   hr = factory->CreateSwapChainForHwnd(
     device.impl_->device.Get(),
-    window.handle_,
+    window.native_handle(),
     &desc,
     nullptr,
     nullptr,
@@ -117,7 +120,7 @@ auto make_swap_chain(d3d_device const& device, win32_window const& window, swap_
     return std::unexpected(make_d3d_error(hr));
   }
 
-  d3d_swap_chain result;
+  d3d_swap_chain result{ d3d_swap_chain::empty_tag{} };
   result.impl_ = std::make_unique<d3d_swap_chain::impl>();
   result.impl_->swap_chain = std::move(swap_chain);
   return result;
@@ -130,6 +133,7 @@ auto make_swap_chain(d3d_device const& device, win32_window const& window, swap_
 d3d_render_target_view::~d3d_render_target_view() = default;
 d3d_render_target_view::d3d_render_target_view(d3d_render_target_view&&) noexcept = default;
 d3d_render_target_view& d3d_render_target_view::operator=(d3d_render_target_view&&) noexcept = default;
+d3d_render_target_view::d3d_render_target_view(empty_tag) noexcept {}
 
 auto make_render_target_view(d3d_device const& device, d3d_swap_chain const& swap_chain)
   -> std::expected<d3d_render_target_view, std::error_code> {
@@ -148,7 +152,7 @@ auto make_render_target_view(d3d_device const& device, d3d_swap_chain const& swa
     return std::unexpected(make_d3d_error(hr));
   }
 
-  d3d_render_target_view result;
+  d3d_render_target_view result{ d3d_render_target_view::empty_tag{} };
   result.impl_ = std::make_unique<d3d_render_target_view::impl>();
   result.impl_->rtv = std::move(rtv);
   return result;

@@ -1,8 +1,8 @@
 #pragma once
-#include <memory>
 #include <expected>
+#include <memory>
 #include <system_error>
-#include <string_view>
+#include <string>
 #include "types.hpp"
 
 // Forward-declare HWND without pulling in <windows.h>.
@@ -12,15 +12,14 @@ namespace betty::platform {
 
 struct window_settings {
   window_dimensions size{ default_window_size };
-  std::wstring_view class_name{ L"betty_window_class" };
-  std::wstring_view title{ L"betty" };
-  int show_command{ default_show_command };
+  std::wstring class_name{ L"betty_window_class" };
+  std::wstring title{ L"betty" };
+  window_show_command show_command{ default_show_command };
   // Note: no HINSTANCE — make_window() calls GetModuleHandleW(nullptr) internally.
 };
 
 // Move-only window handle. Closes the window on destruction.
 struct win32_window {
-  win32_window();
   ~win32_window();
   win32_window(win32_window&& other) noexcept;
   win32_window& operator=(win32_window&& other) noexcept;
@@ -28,7 +27,12 @@ struct win32_window {
   win32_window(win32_window const&) = delete;
   win32_window& operator=(win32_window const&) = delete;
 
+  [[nodiscard]] auto native_handle() const noexcept -> HWND { return handle_; }
+
 private:
+  struct empty_tag {};
+  explicit win32_window(empty_tag) noexcept : handle_(nullptr) {}
+
   HWND handle_{ nullptr };
 
   friend auto make_window(window_settings const&)
@@ -37,7 +41,7 @@ private:
     -> std::expected<struct d3d_swap_chain, std::error_code>;
 };
 
-auto make_window(window_settings const& settings)
+[[nodiscard]] auto make_window(window_settings const& settings)
   -> std::expected<win32_window, std::error_code>;
 
 // Returns false when WM_QUIT is received (application should exit).

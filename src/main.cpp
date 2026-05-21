@@ -45,13 +45,12 @@ int main() {
   }
   auto& device = *device_result;
 
-  // 3. Create swap chain
+  // 3. Create swap chain (dimensions come from window_dimensions directly)
   auto swap_chain_result = platform::make_swap_chain(
     device,
     window,
     platform::swap_chain_settings{
-      .width = platform::default_window_size.width,
-      .height = platform::default_window_size.height
+      .size = platform::default_window_size
     }
   );
   if (!swap_chain_result) {
@@ -71,10 +70,7 @@ int main() {
   // 5. Create glyph renderer
   auto renderer_result = platform::make_glyph_renderer(
     device,
-    platform::window_dimensions{
-      platform::default_window_size.width,
-      platform::default_window_size.height
-    }
+    platform::default_window_size
   );
   
   if (!renderer_result) {
@@ -87,7 +83,10 @@ int main() {
   // 6. Message loop (render on idle)
   while (platform::dispatch_pending_messages()) {
     device.clear(rtv, platform::mocha_base);
-    renderer.draw(device, rtv, "betty");
+    if (auto draw_result = renderer.draw(device, rtv, "betty"); !draw_result) {
+      log_error(draw_result.error(), "draw glyphs");
+      return 1;
+    }
     const auto present_result = swap_chain.present();
     if (!present_result) {
       log_error(present_result.error(), "present");

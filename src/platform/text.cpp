@@ -14,6 +14,7 @@
 #include <cmath>
 #include <cstdint>
 #include <memory>
+#include <span>
 #include <vector>
 
 using Microsoft::WRL::ComPtr;
@@ -24,15 +25,16 @@ namespace betty::platform {
 // Constants
 // ===========================================================================
 
-inline constexpr uint32_t k_max_glyphs_per_frame = 64;   // 64 glyphs = 256 vertices, 384 indices
-inline constexpr uint32_t k_vertices_per_quad    = 4;
-inline constexpr uint32_t k_indices_per_quad     = 6;
+inline constexpr uint32_t k_font_size_px        = 18u;   // raster font size used everywhere
+inline constexpr uint32_t k_max_glyphs_per_frame = 64u;  // 64 glyphs = 256 vertices, 384 indices
+inline constexpr uint32_t k_vertices_per_quad    = 4u;
+inline constexpr uint32_t k_indices_per_quad     = 6u;
 inline constexpr uint32_t k_max_vertices = k_max_glyphs_per_frame * k_vertices_per_quad;
 inline constexpr uint32_t k_max_indices  = k_max_glyphs_per_frame * k_indices_per_quad;
-inline constexpr uint32_t k_atlas_cols   = 16;
-inline constexpr uint32_t k_atlas_rows   = 8;
-inline constexpr uint32_t k_atlas_glyphs = 128;  // ASCII 0–127
-inline constexpr uint32_t k_glyph_padding = 1;   // px each side
+inline constexpr uint32_t k_atlas_cols   = 16u;
+inline constexpr uint32_t k_atlas_rows   = 8u;
+inline constexpr uint32_t k_atlas_glyphs = 128u;  // ASCII 0–127
+inline constexpr uint32_t k_glyph_padding = 1u;   // px each side
 
 // Catppuccin Mocha foreground colour (#cdd6f4).
 // Pre-baked into the atlas so the pixel shader can sample and output directly.
@@ -48,6 +50,8 @@ struct glyph_vertex {
   float x, y;   // pixel position (top-left origin)
   float u, v;   // texture coordinates (0..1)
 };
+static_assert(sizeof(glyph_vertex) == 4 * sizeof(float),
+              "glyph_vertex must be 16 bytes for D3D11_INPUT_ELEMENT_DESC");
 
 struct glyph_constants {
   float window_width;
@@ -58,7 +62,8 @@ struct glyph_constants {
   float inv_tex_height;
   float _pad[2];  // pad to 32 bytes for D3D11 alignment
 };
-static_assert(sizeof(glyph_constants) == 32);
+static_assert(sizeof(glyph_constants) == 32,
+              "glyph_constants must be 32 bytes for D3D11 cbuffer alignment");
 
 // Per-glyph slot metadata (atlas position + precomputed UVs).
 struct glyph_slot {
@@ -167,6 +172,7 @@ struct glyph_renderer::impl {
 glyph_renderer::~glyph_renderer() = default;
 glyph_renderer::glyph_renderer(glyph_renderer&&) noexcept = default;
 glyph_renderer& glyph_renderer::operator=(glyph_renderer&&) noexcept = default;
+glyph_renderer::glyph_renderer(empty_tag) noexcept {}
 
 auto glyph_renderer::cell_width() const -> uint32_t {
   return impl_->cell_width;
@@ -260,7 +266,7 @@ auto rasterize_glyph(IDWriteFactory* factory, IDWriteFontFace1* font_face,
                      float baseline_y,
                      std::vector<uint8_t>& staging_buffer) -> bool {
   // 1. Get glyph index.
-  UINT32 const cp32 = static_cast<UINT32>(codepoint);
+  UINT32 const cp32 = static_cast<uint32_t>(codepoint);
   UINT16 glyph_index = 0;
   HRESULT hr = font_face->GetGlyphIndices(&cp32, 1, &glyph_index);
   if (FAILED(hr)) return false;
@@ -386,6 +392,8 @@ auto make_glyph_renderer(d3d_device const& device, window_dimensions const& wind
 
   auto p = std::make_unique<glyph_renderer::impl>();
 
+  constexpr float k_font_size = static_cast<float>(k_font_size_px);
+
   // --- 1. Create DWrite factory ---------------------------------------------
   HRESULT hr = DWriteCreateFactory(
     DWRITE_FACTORY_TYPE_SHARED,
@@ -400,7 +408,7 @@ auto make_glyph_renderer(d3d_device const& device, window_dimensions const& wind
     DWRITE_FONT_WEIGHT_NORMAL,
     DWRITE_FONT_STYLE_NORMAL,
     DWRITE_FONT_STRETCH_NORMAL,
-    18.0f,
+    k_font_size,
     L"en-US",
     p->text_format.GetAddressOf()
   );
@@ -416,10 +424,8 @@ auto make_glyph_renderer(d3d_device const& device, window_dimensions const& wind
   if (FAILED(hr)) return std::unexpected(make_d3d_error(hr));
 
   // Compute baseline position: ascent converted to pixels at raster size.
-  constexpr float raster_font_size = 18.0f;
-  p->baseline_y = static_cast<float>(font_ascent) * raster_font_size
+  p->baseline_y = static_cast<float>(font_ascent) * k_font_size
                 / static_cast<float>(font_design_units_per_em);
-  if (FAILED(hr)) return std::unexpected(make_d3d_error(hr));
 
   // --- 4. Determine atlas layout --------------------------------------------
   p->slot_width  = p->cell_width  + k_glyph_padding * 2;
@@ -469,7 +475,7 @@ auto make_glyph_renderer(d3d_device const& device, window_dimensions const& wind
       uint32_t slot_y = row * p->slot_height;
 
       rasterize_glyph(p->dwrite_factory.Get(), p->font_face.Get(),
-                       18.0f, cp,
+                       k_font_size, cp,
                        slot_x, slot_y,
                        p->atlas_width,
                        p->cell_width, p->cell_height,
@@ -659,7 +665,7 @@ auto make_glyph_renderer(d3d_device const& device, window_dimensions const& wind
   p->window_height = window_size.height;
 
   // Wrap and return.
-  glyph_renderer result;
+  glyph_renderer result{ glyph_renderer::empty_tag{} };
   result.impl_ = std::move(p);
   return result;
 }
@@ -668,24 +674,28 @@ auto make_glyph_renderer(d3d_device const& device, window_dimensions const& wind
 // glyph_renderer::draw
 // ===========================================================================
 
-void glyph_renderer::draw(d3d_device const& device,
+auto glyph_renderer::draw(d3d_device const& device,
                            d3d_render_target_view const& rtv,
-                           std::string_view text) const {
+                           std::span<const char> text) const
+  -> std::expected<void, std::error_code> {
+
   auto* context = device.impl_->context.Get();
 
   // --- 1. Map vertex buffer ------------------------------------------------
   D3D11_MAPPED_SUBRESOURCE mapped{};
   HRESULT hr = context->Map(impl_->vertex_buffer.Get(), 0,
                               D3D11_MAP_WRITE_DISCARD, 0, &mapped);
-  if (FAILED(hr)) return;
+  if (FAILED(hr)) {
+    return std::unexpected(make_d3d_error(hr));
+  }
 
   auto* vertices = static_cast<glyph_vertex*>(mapped.pData);
   uint32_t col = 0;
   uint32_t quad_count = 0;
 
   for (size_t i = 0; i < text.size() && quad_count < k_max_glyphs_per_frame; ++i) {
-    uint8_t cp = static_cast<uint8_t>(text[i]);
-    if (cp > 127) continue;
+    unsigned char cp = static_cast<unsigned char>(text[i]);
+    if (cp > 127) continue;  // ASCII only — caller should ensure valid input
 
     auto& slot = impl_->glyph_slots[cp];
     float x0 = static_cast<float>(col * impl_->cell_width);
@@ -706,7 +716,7 @@ void glyph_renderer::draw(d3d_device const& device,
 
   context->Unmap(impl_->vertex_buffer.Get(), 0);
 
-  if (quad_count == 0) return;
+  if (quad_count == 0) return {};
 
   // --- 2. Bind pipeline state ----------------------------------------------
   context->OMSetRenderTargets(1, rtv.impl_->rtv.GetAddressOf(), nullptr);
@@ -738,6 +748,8 @@ void glyph_renderer::draw(d3d_device const& device,
 
   // --- 3. Draw -------------------------------------------------------------
   context->DrawIndexed(quad_count * k_indices_per_quad, 0, 0);
+
+  return {};
 }
 
 } // namespace betty::platform

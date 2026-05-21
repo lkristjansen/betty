@@ -3,6 +3,7 @@
 #define WIN32_LEAN_AND_MEAN
 #define NOMINMAX
 #include <windows.h>
+#include <string>
 
 namespace betty::platform {
 
@@ -22,11 +23,29 @@ LRESULT CALLBACK WndProc(HWND hwnd, UINT msg, WPARAM wParam, LPARAM lParam) {
   }
 }
 
+// UTF-8 → UTF-16 converter with error reporting.
+auto widen(std::string_view sv) -> std::wstring {
+  if (sv.empty()) return {};
+  int needed = MultiByteToWideChar(CP_UTF8, 0, sv.data(),
+                                    static_cast<int>(sv.size()), nullptr, 0);
+  if (needed <= 0) {
+    // Invalid UTF-8 input — return a hardcoded fallback.
+    return L"<invalid UTF-8>";
+  }
+  std::wstring result(needed, L'\0');
+  int converted = MultiByteToWideChar(CP_UTF8, 0, sv.data(),
+                                       static_cast<int>(sv.size()), result.data(), needed);
+  if (converted <= 0) {
+    return L"<conversion error>";
+  }
+  // MultiByteToWideChar includes the null terminator in `needed`.
+  result.resize(static_cast<size_t>(converted));
+  return result;
+}
+
 } // anonymous namespace
 
 // --- win32_window ----------------------------------------------------------
-
-win32_window::win32_window() = default;
 
 win32_window::~win32_window() {
   if (handle_ != nullptr && IsWindow(handle_)) {
@@ -66,7 +85,7 @@ auto make_window(window_settings const& settings)
   wc.hIcon = LoadIconW(nullptr, reinterpret_cast<LPCWSTR>(IDI_APPLICATION));
   wc.hCursor = LoadCursorW(nullptr, reinterpret_cast<LPCWSTR>(IDC_ARROW));
   wc.hbrBackground = nullptr;  // D3D clears the colour
-  wc.lpszClassName = settings.class_name.data();
+  wc.lpszClassName = settings.class_name.c_str();
   wc.hIconSm = nullptr;
 
   // If registration fails for a reason other than "class already exists", error out.
@@ -90,8 +109,8 @@ auto make_window(window_settings const& settings)
   // 3. Create window
   HWND hwnd = CreateWindowExW(
     0,                              // dwExStyle
-    settings.class_name.data(),     // lpClassName
-    settings.title.data(),          // lpWindowName
+    settings.class_name.c_str(),    // lpClassName
+    settings.title.c_str(),         // lpWindowName
     dwStyle,                        // dwStyle
     CW_USEDEFAULT, CW_USEDEFAULT,   // x, y
     windowWidth,                    // nWidth
@@ -107,9 +126,9 @@ auto make_window(window_settings const& settings)
   }
 
   // 4. Show window
-  ShowWindow(hwnd, settings.show_command);
+  ShowWindow(hwnd, static_cast<int>(settings.show_command));
 
-  win32_window result;
+  win32_window result{ win32_window::empty_tag{} };
   result.handle_ = hwnd;
   return result;
 }
@@ -131,14 +150,8 @@ auto dispatch_pending_messages() -> bool {
 // --- show_error_message ----------------------------------------------------
 
 auto show_error_message(std::string_view title, std::string_view message) -> void {
-  auto widen = [](std::string_view sv) -> std::wstring {
-    if (sv.empty()) return {};
-    int needed = MultiByteToWideChar(CP_UTF8, 0, sv.data(), static_cast<int>(sv.size()), nullptr, 0);
-    std::wstring result(needed, L'\0');
-    MultiByteToWideChar(CP_UTF8, 0, sv.data(), static_cast<int>(sv.size()), result.data(), needed);
-    return result;
-  };
-  MessageBoxW(nullptr, widen(message).c_str(), widen(title).c_str(), MB_OK | MB_ICONERROR);
+  MessageBoxW(nullptr, widen(message).c_str(), widen(title).c_str(),
+              MB_OK | MB_ICONERROR);
 }
 
 } // namespace betty::platform
