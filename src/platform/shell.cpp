@@ -19,13 +19,11 @@ extern "C" void WINAPI ClosePseudoConsole(HPCON hPC);
 
 #include <string>
 #include <atomic>
-#include <deque>
 #include <memory>
 #include <mutex>
 #include <condition_variable>
 #include <thread>
 #include <string_view>
-#include <chrono>
 
 #include "error.hpp"
 
@@ -45,7 +43,7 @@ struct shell_impl {
 
   std::thread   read_thread;
   std::mutex    output_mutex;
-  std::deque<std::string> output_queue;
+  std::string   raw_buffer;         // VT-stripped bytes, \r and \n preserved
   std::condition_variable output_cv;
 
   std::atomic<bool> running{ true };
@@ -101,9 +99,9 @@ auto strip_vt(std::string_view data) -> std::string {
       ++i; continue;
     }
 
-    // Keep newlines and printable characters.
-    // Drop \r and other C0 controls.
-    if (c == '\n' || (c >= 0x20 && c < 0x7F) || c >= 0x80) {
+    // Keep newlines, carriage returns, and printable characters.
+    // Drop other C0 controls.
+    if (c == '\n' || c == '\r' || (c >= 0x20 && c < 0x7F) || c >= 0x80) {
       out += static_cast<char>(c);
     }
     ++i;
@@ -112,10 +110,7 @@ auto strip_vt(std::string_view data) -> std::string {
 }
 
 void read_thread_fn(shell_impl* p) {
-  std::string buffer;
   char read_buf[4096];
-  auto last_flush = std::chrono::steady_clock::now();
-  constexpr auto flush_interval = std::chrono::milliseconds(100);
 
   while (p->running.load()) {
     DWORD bytes_read = 0;
@@ -127,49 +122,13 @@ void read_thread_fn(shell_impl* p) {
       break;
     }
 
-    // Strip VT/ANSI escape sequences before line-splitting.
+    // Strip VT/ANSI escape sequences, preserving \r, \n, and printable chars.
     std::string cleaned = strip_vt({read_buf, bytes_read});
-    buffer.append(cleaned);
 
-    while (true) {
-      size_t pos = buffer.find('\n');
-      if (pos == std::string::npos) break;
-
-      std::string line = buffer.substr(0, pos);
-      buffer.erase(0, pos + 1);
-
-      // Drop trailing \r that might remain (e.g. after stripping \r\n → \n).
-      while (!line.empty() && line.back() == '\r') line.pop_back();
-
-      {
-        std::lock_guard<std::mutex> lock(p->output_mutex);
-        p->output_queue.push_back(std::move(line));
-      }
-      p->output_cv.notify_one();
+    {
+      std::lock_guard<std::mutex> lock(p->output_mutex);
+      p->raw_buffer.append(cleaned);
     }
-
-    // Flush any partial line that's been sitting in the buffer longer than
-    // flush_interval. This captures unterminated prompts like "PS C:\\> ".
-    auto now = std::chrono::steady_clock::now();
-    if (!buffer.empty() && (now - last_flush) >= flush_interval) {
-      std::string partial;
-      {
-        std::lock_guard<std::mutex> lock(p->output_mutex);
-        partial.swap(buffer);
-      }
-      {
-        std::lock_guard<std::mutex> lock(p->output_mutex);
-        p->output_queue.push_back(std::move(partial));
-      }
-      p->output_cv.notify_one();
-      last_flush = now;
-    }
-  }
-
-  // Flush remaining data on exit.
-  if (!buffer.empty()) {
-    std::lock_guard<std::mutex> lock(p->output_mutex);
-    p->output_queue.push_back(std::move(buffer));
     p->output_cv.notify_one();
   }
 }
@@ -351,20 +310,16 @@ auto is_shell_running(shell const& sh) -> bool {
 }
 
 // ===========================================================================
-// read_shell_output
+// read_shell_output_raw
 // ===========================================================================
 
-auto read_shell_output(shell& sh)
-  -> std::expected<std::vector<std::string>, std::error_code> {
+auto read_shell_output_raw(shell& sh) -> std::string {
+  if (!sh.impl_) return {};
 
-  if (!sh.impl_)
-    return std::unexpected(make_win32_error(ERROR_INVALID_HANDLE));
-
-  std::vector<std::string> result;
-  std::lock_guard<std::mutex> lock(sh.impl_->output_mutex);
-  while (!sh.impl_->output_queue.empty()) {
-    result.push_back(std::move(sh.impl_->output_queue.front()));
-    sh.impl_->output_queue.pop_front();
+  std::string result;
+  {
+    std::lock_guard<std::mutex> lock(sh.impl_->output_mutex);
+    result.swap(sh.impl_->raw_buffer);
   }
   return result;
 }

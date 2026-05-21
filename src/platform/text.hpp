@@ -36,6 +36,14 @@ struct glyph_renderer {
                                 std::span<std::string_view const> lines,
                                 uint32_t start_row) const -> std::expected<void, std::error_code>;
 
+  // Draw a terminal grid. `cells` is a row-major flat array of `rows × cols`
+  // codepoints. Each cell is rendered at its grid position.
+  // Non-ASCII codepoints (> 127) are rendered as '?'.
+  [[nodiscard]] auto draw_grid(d3d_device const& device, d3d_render_target_view const& rtv,
+                                std::span<const char32_t> cells,
+                                uint32_t cols, uint32_t rows) const
+      -> std::expected<void, std::error_code>;
+
   ~glyph_renderer();
   glyph_renderer(glyph_renderer&&) noexcept;
   glyph_renderer& operator=(glyph_renderer&&) noexcept;

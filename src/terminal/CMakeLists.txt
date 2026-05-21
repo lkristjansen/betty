@@ -1,5 +1,5 @@
 add_library(terminal STATIC
-    text_buffer.cpp
+    grid.cpp
     input_handler.cpp
 )
 

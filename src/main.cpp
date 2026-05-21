@@ -9,7 +9,7 @@
 #include "platform/gfx.hpp"
 #include "platform/text.hpp"
 #include "platform/shell.hpp"
-#include "terminal/text_buffer.hpp"
+#include "terminal/grid.hpp"
 #include "terminal/input_handler.hpp"
 
 namespace platform = betty::platform;
@@ -93,12 +93,11 @@ int main() {
   uint32_t const rows = platform::default_window_size.height / cell_h;
 
   // 7. State
-  terminal::text_buffer buffer(rows);
+  terminal::terminal_grid grid(cols, rows);
   terminal::input_handler input;
 
   // 8. Create shell
   std::unique_ptr<platform::shell> shell;
-  bool shell_failed = false;
 
   auto shell_result = platform::make_shell(platform::shell_settings{
     .cols = cols,
@@ -108,9 +107,8 @@ int main() {
   if (shell_result) {
     shell = std::move(*shell_result);
   } else {
-    shell_failed = true;
     log_error(shell_result.error(), "Failed to create shell process");
-    buffer.append_line("Failed to create shell process.");
+    grid.write_bytes("Failed to create shell process.\r\n");
   }
 
 
@@ -134,54 +132,34 @@ int main() {
 
     // Read shell output
     if (shell && platform::is_shell_running(*shell)) {
-      auto output = platform::read_shell_output(*shell);
-      if (output && !output->empty()) {
-        for (auto& line : *output) {
-          if (line.empty()) continue;
-          bool const all_ws = line.find_first_not_of(" \t") == std::string::npos;
-          if (all_ws) continue;
-          buffer.append_line(std::move(line));
-        }
+      std::string raw = platform::read_shell_output_raw(*shell);
+      if (!raw.empty()) {
+        grid.write_bytes(raw);
       }
     } else if (shell && !platform::is_shell_running(*shell)) {
       static bool shown_exit = false;
       if (!shown_exit) {
-        buffer.append_line("[shell exited]");
+        grid.write_bytes("[shell exited]\r\n");
         shown_exit = true;
       }
       // Drain remaining output
-      auto output = platform::read_shell_output(*shell);
-      if (output && !output->empty()) {
-        for (auto& line : *output) {
-          if (line.empty()) continue;
-          bool const all_ws = line.find_first_not_of(" \t") == std::string::npos;
-          if (all_ws) continue;
-          buffer.append_line(std::move(line));
-        }
+      std::string raw = platform::read_shell_output_raw(*shell);
+      if (!raw.empty()) {
+        grid.write_bytes(raw);
       }
     }
 
-    // Build render lines: completed buffer lines
-    auto const& completed = buffer.lines();
-    std::vector<std::string> render_owned;   // owns any combined strings
-    std::vector<std::string_view> render_lines;
-    render_lines.reserve(completed.size() + 1);
-
-    for (auto const& line : completed) {
-      render_lines.emplace_back(line);
-    }
-
-    if (!render_lines.empty()) {
-      uint32_t const screen_rows = renderer.cell_height()
-        ? platform::default_window_size.height / renderer.cell_height()
-        : 1;
-      // Scroll: if buffer has more lines than fit on screen, skip the oldest.
-      uint32_t const start_row =
-        render_lines.size() > screen_rows
-          ? render_lines.size() - screen_rows
-          : 0;
-      if (auto draw_result = renderer.draw_text(device, rtv, render_lines, start_row); !draw_result) {
-        log_error(draw_result.error(), "draw text");
+    // Render the grid
+    auto const& cells = grid.cells();
+    if (cells.size() > 0) {
+      std::vector<char32_t> codepoints;
+      codepoints.reserve(cells.size());
+      for (auto const& cell : cells) {
+        codepoints.push_back(cell.codepoint);
+      }
+      if (auto draw_result = renderer.draw_grid(device, rtv, codepoints, grid.cols(), grid.rows());
+          !draw_result) {
+        log_error(draw_result.error(), "draw grid");
         return 1;
       }
     }

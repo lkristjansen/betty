@@ -5,7 +5,6 @@
 #include <string>
 #include <string_view>
 #include <system_error>
-#include <vector>
 
 namespace betty::platform {
 
@@ -45,11 +44,10 @@ auto destroy_shell(std::unique_ptr<shell> sh) -> void;
 // Check whether the shell process is still running.
 [[nodiscard]] auto is_shell_running(shell const& sh) -> bool;
 
-// Read available output from the shell.
-// Returns a vector of completed lines.  Empty vector means no data ready.
-// The caller checks is_shell_running separately to detect exit.
-[[nodiscard]] auto read_shell_output(shell& sh)
-  -> std::expected<std::vector<std::string>, std::error_code>;
+// Read raw VT-stripped output from the shell.
+// Returns a string of bytes. \r and \n are preserved, escape sequences are removed.
+// Empty string means no data ready.
+[[nodiscard]] auto read_shell_output_raw(shell& sh) -> std::string;
 
 // Send input bytes to the shell's input pipe.
 auto write_shell_input(shell& sh, std::string_view data)

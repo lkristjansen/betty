@@ -4,7 +4,7 @@ Each task is a vertical slice: when completed, the user can launch `betty.exe` a
 
 ---
 
-### 1. Project scaffold + bare window
+### 1. ✅ Project scaffold + bare window
 **User sees:** Launching `betty.exe` opens a window filled with the Catppuccin Mocha background colour (`#1e1e2e`). The window has a standard title bar and can be closed.
 - CMake project structure
 - Win32 window class, message loop
@@ -12,7 +12,7 @@ Each task is a vertical slice: when completed, the user can launch `betty.exe` a
 
 ---
 
-### 2. Static text rendering
+### 2. ✅ Static text rendering
 **User sees:** Hardcoded text ("betty") appears in the window, rendered with Consolas at 14 pt via DirectWrite. Text is positioned at the top-left of the window.
 - DirectWrite factory, text format, text layout
 - Render text to a DirectWrite bitmap/atlas or draw directly each frame
@@ -20,16 +20,16 @@ Each task is a vertical slice: when completed, the user can launch `betty.exe` a
 
 ---
 
-### 3. Live shell I/O
+### 3. ✅ Live shell I/O
 **User sees:** A PowerShell session runs in the window. Typing on the keyboard sends input to the shell; shell output appears as raw text in the window. Closing the window terminates the shell.
 - Spawn PowerShell via ConPTY (`CreatePseudoConsole`)
 - Read thread for ConPTY output pipe
-- Forward keystrokes (WM_CHAR, WM_KEYDOWN) to ConPTY input pipe
+- Forward keystrokes (WM_KEYDOWN) to ConPTY input pipe
 - Display raw output text line-by-line in the window
 
 ---
 
-### 4. Terminal grid
+### 4. ✅ Terminal grid
 **User sees:** Output fills the window top-to-bottom and scrolls when it reaches the bottom, instead of just placing each line at a fixed position. Characters sit in a proper grid.
 - Cell grid data structure (rows × columns of character cells)
 - Character placement at cursor position, cursor advances

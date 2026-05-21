@@ -848,4 +848,96 @@ auto glyph_renderer::draw_text(d3d_device const& device,
 
   return {};
 }
+
+// ===========================================================================
+// glyph_renderer::draw_grid — render a full terminal grid
+// ===========================================================================
+
+auto glyph_renderer::draw_grid(d3d_device const& device,
+                                d3d_render_target_view const& rtv,
+                                std::span<const char32_t> cells,
+                                uint32_t cols, uint32_t rows) const
+  -> std::expected<void, std::error_code> {
+
+  auto* context = device.impl_->context.Get();
+
+  // Clamp to the actual window dimensions.
+  uint32_t const max_cols = impl_->window_width / impl_->cell_width;
+  uint32_t const max_rows = impl_->window_height / impl_->cell_height;
+  uint32_t const draw_cols = std::min(cols, max_cols);
+  uint32_t const draw_rows = std::min(rows, max_rows);
+
+  // --- 1. Map vertex buffer ------------------------------------------------
+  D3D11_MAPPED_SUBRESOURCE mapped{};
+  HRESULT hr = context->Map(impl_->vertex_buffer.Get(), 0,
+                              D3D11_MAP_WRITE_DISCARD, 0, &mapped);
+  if (FAILED(hr)) {
+    return std::unexpected(make_d3d_error(hr));
+  }
+
+  auto* vertices = static_cast<glyph_vertex*>(mapped.pData);
+  uint32_t quad_count = 0;
+
+  for (uint32_t row = 0; row < draw_rows; ++row) {
+    float const y0 = static_cast<float>(row * impl_->cell_height);
+    float const y1 = y0 + static_cast<float>(impl_->cell_height);
+
+    for (uint32_t col = 0; col < draw_cols && quad_count < k_max_glyphs_per_frame; ++col) {
+      size_t const idx = static_cast<size_t>(row) * cols + col;
+      char32_t cp = idx < cells.size() ? cells[idx] : U' ';
+
+      // Map to ASCII glyph atlas.
+      unsigned char glyph = (cp <= 127) ? static_cast<unsigned char>(cp) : static_cast<unsigned char>('?');
+
+      auto& slot = impl_->glyph_slots[glyph];
+      float const x0 = static_cast<float>(col * impl_->cell_width);
+      float const x1 = x0 + static_cast<float>(impl_->cell_width);
+
+      // Quad vertices (top-left, top-right, bottom-right, bottom-left).
+      uint32_t v = quad_count * k_vertices_per_quad;
+      vertices[v + 0] = { x0, y0, slot.u0, slot.v0 };
+      vertices[v + 1] = { x1, y0, slot.u1, slot.v0 };
+      vertices[v + 2] = { x1, y1, slot.u1, slot.v1 };
+      vertices[v + 3] = { x0, y1, slot.u0, slot.v1 };
+
+      ++quad_count;
+    }
+  }
+
+  context->Unmap(impl_->vertex_buffer.Get(), 0);
+
+  if (quad_count == 0) return {};
+
+  // --- 2. Bind pipeline state ----------------------------------------------
+  context->OMSetRenderTargets(1, rtv.impl_->rtv.GetAddressOf(), nullptr);
+  context->OMSetBlendState(impl_->blend_state.Get(), nullptr, 0xFFFFFFFF);
+  context->OMSetDepthStencilState(impl_->depth_state.Get(), 0);
+  context->RSSetState(impl_->rasterizer_state.Get());
+
+  D3D11_VIEWPORT vp{};
+  vp.Width    = static_cast<FLOAT>(impl_->window_width);
+  vp.Height   = static_cast<FLOAT>(impl_->window_height);
+  vp.MinDepth = 0.0f;
+  vp.MaxDepth = 1.0f;
+  context->RSSetViewports(1, &vp);
+
+  context->IASetPrimitiveTopology(D3D11_PRIMITIVE_TOPOLOGY_TRIANGLELIST);
+  context->IASetInputLayout(impl_->input_layout.Get());
+
+  UINT stride = sizeof(glyph_vertex);
+  UINT offset = 0;
+  context->IASetVertexBuffers(0, 1, impl_->vertex_buffer.GetAddressOf(), &stride, &offset);
+  context->IASetIndexBuffer(impl_->index_buffer.Get(), DXGI_FORMAT_R16_UINT, 0);
+
+  context->VSSetShader(impl_->vertex_shader.Get(), nullptr, 0);
+  context->VSSetConstantBuffers(0, 1, impl_->constant_buffer.GetAddressOf());
+  context->PSSetShader(impl_->pixel_shader.Get(), nullptr, 0);
+  context->PSSetShaderResources(0, 1, impl_->atlas_srv.GetAddressOf());
+  context->PSSetSamplers(0, 1, impl_->sampler_state.GetAddressOf());
+
+  // --- 3. Draw -------------------------------------------------------------
+  context->DrawIndexed(quad_count * k_indices_per_quad, 0, 0);
+
+  return {};
+}
 } // namespace betty::platform
