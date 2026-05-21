@@ -127,6 +127,7 @@ int main() {
     });
 
   // 10. Message loop
+  int exit_code = 0;
   while (platform::dispatch_pending_messages()) {
     device.clear(rtv, platform::mocha_base);
 
@@ -160,20 +161,23 @@ int main() {
       if (auto draw_result = renderer.draw_grid(device, rtv, codepoints, grid.cols(), grid.rows());
           !draw_result) {
         log_error(draw_result.error(), "draw grid");
-        return 1;
+        exit_code = 1;
+        break;
       }
     }
 
     if (auto present_result = swap_chain.present(); !present_result) {
       log_error(present_result.error(), "present");
-      return 1;
+      exit_code = 1;
+      break;
     }
   }
 
-  // 11. Cleanup
+  // 11. Cleanup — destroy_shell gives the child process a chance to exit
+  //     gracefully, then shell_impl's destructor handles hard resource cleanup.
   if (shell) {
     platform::destroy_shell(std::move(shell));
   }
 
-  return 0;
+  return exit_code;
 }

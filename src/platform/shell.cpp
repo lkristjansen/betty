@@ -30,6 +30,16 @@ extern "C" void WINAPI ClosePseudoConsole(HPCON hPC);
 namespace betty::platform {
 
 // ===========================================================================
+// Forward-declared helpers
+// ===========================================================================
+
+namespace {
+  auto safe_close(HANDLE h) -> void {
+    if (h && h != INVALID_HANDLE_VALUE) CloseHandle(h);
+  }
+}
+
+// ===========================================================================
 // shell_impl — PIMPL with all Windows types hidden here
 // ===========================================================================
 
@@ -47,19 +57,66 @@ struct shell_impl {
   std::condition_variable output_cv;
 
   std::atomic<bool> running{ true };
+
+  // Destructor handles the hard resource cleanup.
+  // destroy_shell() should be called first to send "exit" and wait for
+  // the child process to terminate gracefully.
+  ~shell_impl() {
+    // 1. Tell the read thread to stop polling.
+    running.store(false);
+
+    // 2. Cancel any blocking synchronous I/O the read thread might be
+    //    stuck on (ReadFile on the output pipe).  CancelSynchronousIo
+    //    is the correct API; closing the handle from another thread is
+    //    undefined behaviour for synchronous I/O.
+    if (read_thread.joinable()) {
+      CancelSynchronousIo(read_thread.native_handle());
+    }
+
+    // 3. Close the ConPTY.  This also closes the write-end of the
+    //    output pipe (conpty_output), causing ReadFile to return EOF
+    //    as a secondary unblocking mechanism.
+    if (hpc) {
+      ClosePseudoConsole(hpc);
+      hpc = nullptr;
+    }
+
+    // 4. Wait for the read thread to finish, with a timeout safety net.
+    //    The thread should exit promptly because of steps 2 and 3 above.
+    if (read_thread.joinable()) {
+      HANDLE hThread = read_thread.native_handle();
+      DWORD waitResult = WaitForSingleObject(hThread, 3000);
+      if (waitResult == WAIT_OBJECT_0) {
+        // Thread exited cleanly — join is a no-op that resets the
+        // std::thread object.
+        read_thread.join();
+      } else {
+        // The thread didn't exit even after CancelSynchronousIo and
+        // closing the ConPTY.  Detach it rather than blocking process
+        // shutdown — the OS will reclaim it when the process exits.
+        read_thread.detach();
+      }
+    }
+
+    // 5. Close all remaining handles.
+    safe_close(input_pipe);
+    safe_close(output_pipe);
+    safe_close(conpty_input);
+    safe_close(conpty_output);
+    safe_close(process);
+  }
+
+  shell_impl(shell_impl const&) = delete;
+  shell_impl& operator=(shell_impl const&) = delete;
+  shell_impl() = default;
 };
 
 // --- shell — rule of five --------------------------------------------------
-
 shell::~shell() = default;
 shell::shell(shell&&) noexcept = default;
 shell& shell::operator=(shell&&) noexcept = default;
 
 namespace {
-
-auto safe_close(HANDLE h) -> void {
-  if (h && h != INVALID_HANDLE_VALUE) CloseHandle(h);
-}
 
 // Strip VT/ANSI escape sequences and control characters from raw ConPTY output.
 // Keeps printable text and newlines (\n).  This is a minimal cleaner so that
@@ -265,39 +322,33 @@ auto make_shell(shell_settings const& settings)
 // ===========================================================================
 // destroy_shell
 // ===========================================================================
+// Send "exit" to the shell and give it a chance to shut down gracefully.
+// After this returns, the caller should let the shell unique_ptr go out
+// of scope — shell_impl's destructor handles the heavy cleanup (closing
+// the ConPTY to unblock the read thread, joining the thread, and closing
+// all handles).
 
 auto destroy_shell(std::unique_ptr<shell> sh) -> void {
   if (!sh || !sh->impl_) return;
   auto* p = sh->impl_.get();
 
-  // 1. Send exit command.
+  // 1. Send exit command to give the shell a chance to terminate gracefully.
   if (p->input_pipe && p->input_pipe != INVALID_HANDLE_VALUE) {
     DWORD written = 0;
     const char exit_cmd[] = "exit\r\n";
     WriteFile(p->input_pipe, exit_cmd, static_cast<DWORD>(sizeof(exit_cmd) - 1), &written, nullptr);
   }
 
-  // 2. Wait for process to exit (2 second timeout).
+  // 2. Wait for process to exit (2 second timeout),
+  //    then forcefully terminate if it didn't.
   if (p->process && p->process != INVALID_HANDLE_VALUE) {
     if (WaitForSingleObject(p->process, 2000) != WAIT_OBJECT_0)
       TerminateProcess(p->process, 1);
   }
 
-  // 3. Stop the read thread.
-  p->running.store(false);
-  if (p->read_thread.joinable()) p->read_thread.join();
-
-  // 4. Close ConPTY.
-  if (p->hpc) ClosePseudoConsole(p->hpc);
-
-  // 5. Close all pipe handles.
-  safe_close(p->input_pipe);
-  safe_close(p->output_pipe);
-  safe_close(p->conpty_input);
-  safe_close(p->conpty_output);
-
-  // 6. Close remaining handles (process).
-  safe_close(p->process);
+  // The caller will now destroy `sh` (end of scope), which invokes
+  // shell_impl's destructor.  The destructor closes the ConPTY first
+  // (unblocking the read thread), joins the thread, and closes all handles.
 }
 
 // ===========================================================================
