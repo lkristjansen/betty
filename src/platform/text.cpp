@@ -286,7 +286,7 @@ auto rasterize_glyph(IDWriteFactory* factory, IDWriteFontFace1* font_face,
     &glyph_run,
     1.0f,                                    // pixelsPerDip
     nullptr,                                 // transform (identity)
-    DWRITE_RENDERING_MODE_ALIASED,           // aliased rendering
+    DWRITE_RENDERING_MODE_CLEARTYPE_NATURAL, // anti-aliased rendering
     DWRITE_MEASURING_MODE_NATURAL,
     0.0f, 0.0f,                              // originX, originY
     analysis.GetAddressOf()
@@ -295,23 +295,25 @@ auto rasterize_glyph(IDWriteFactory* factory, IDWriteFontFace1* font_face,
 
   // 5. Get alpha texture bounds.
   RECT bounds{};
-  hr = analysis->GetAlphaTextureBounds(DWRITE_TEXTURE_ALIASED_1x1, &bounds);
+  hr = analysis->GetAlphaTextureBounds(DWRITE_TEXTURE_CLEARTYPE_3x1, &bounds);
   if (FAILED(hr)) return false;
 
   // Empty glyphs (e.g. space, control chars, .notdef) — nothing to draw.
   // RECT uses standard Windows convention: top < bottom for non-empty.
   if (bounds.right <= bounds.left || bounds.bottom <= bounds.top) return false;
 
-  UINT32 bounds_width  = static_cast<UINT32>(bounds.right - bounds.left);
-  UINT32 bounds_height = static_cast<UINT32>(bounds.bottom - bounds.top);
-  UINT32 buffer_size   = bounds_width * bounds_height;
+  UINT32 const bounds_width  = static_cast<UINT32>(bounds.right - bounds.left);
+  UINT32 const bounds_height = static_cast<UINT32>(bounds.bottom - bounds.top);
+  // ClearType texture is 3× wider (R, G, B subpixel channels per pixel).
+  UINT32 const buffer_size   = bounds_width * bounds_height * 3;
+  UINT32 const buffer_stride = bounds_width * 3;
 
-  std::vector<BYTE> alpha_buffer(buffer_size);
+  std::vector<BYTE> cleartype_buffer(buffer_size);
 
   // 6. Create alpha texture.
-  hr = analysis->CreateAlphaTexture(DWRITE_TEXTURE_ALIASED_1x1,
+  hr = analysis->CreateAlphaTexture(DWRITE_TEXTURE_CLEARTYPE_3x1,
                                       &bounds,
-                                      alpha_buffer.data(),
+                                      cleartype_buffer.data(),
                                       buffer_size);
   if (FAILED(hr)) return false;
 
@@ -343,7 +345,13 @@ auto rasterize_glyph(IDWriteFactory* factory, IDWriteFontFace1* font_face,
       if (dx >= static_cast<int>(slot_x) + k_glyph_padding + static_cast<int>(cell_width))
         continue;
 
-      uint8_t alpha = alpha_buffer[by * bounds_width + bx];
+      // ClearType buffer stores 3 bytes per pixel (R, G, B subpixel coverage).
+      // Average the subpixel channels to get a single coverage value.
+      size_t const ct_idx = static_cast<size_t>(by) * buffer_stride + static_cast<size_t>(bx) * 3;
+      uint8_t const r = cleartype_buffer[ct_idx + 0];
+      uint8_t const g = cleartype_buffer[ct_idx + 1];
+      uint8_t const b = cleartype_buffer[ct_idx + 2];
+      uint8_t const alpha = static_cast<uint8_t>((static_cast<uint32_t>(r) + g + b) / 3);
       if (alpha == 0) continue;
 
       size_t const buf_idx = static_cast<size_t>(dy) * atlas_width + static_cast<size_t>(dx);
