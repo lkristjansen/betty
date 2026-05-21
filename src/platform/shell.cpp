@@ -2,9 +2,25 @@
 #define WIN32_LEAN_AND_MEAN
 #define NOMINMAX
 #include <windows.h>
+
+// Try to include the ConPTY header; if the SDK has it, declarations are
+// provided.  On older SDKs we supply manual forward-declarations.
+#if __has_include(<consoleapi2.h>)
+#  include <consoleapi2.h>
+#else
+using HPCON = void*;
+extern "C" HRESULT WINAPI CreatePseudoConsole(
+    COORD size, HANDLE hInput, HANDLE hOutput,
+    DWORD dwFlags, HPCON* phPC);
+extern "C" HRESULT WINAPI ResizePseudoConsole(
+    HPCON hPC, COORD size);
+extern "C" void WINAPI ClosePseudoConsole(HPCON hPC);
+#endif
+
 #include <string>
 #include <atomic>
 #include <deque>
+#include <memory>
 #include <mutex>
 #include <condition_variable>
 #include <thread>
@@ -21,8 +37,11 @@ namespace betty::platform {
 
 struct shell_impl {
   HANDLE  process{ nullptr };
-  HANDLE  input_write{ nullptr };
-  HANDLE  output_read{ nullptr };
+  HPCON   hpc{ nullptr };          // Pseudoconsole handle
+  HANDLE  input_pipe{ nullptr };   // Parent write end of input pipe
+  HANDLE  output_pipe{ nullptr };  // Parent read end of output pipe
+  HANDLE  conpty_input{ nullptr }; // ConPTY read end of input pipe
+  HANDLE  conpty_output{ nullptr };// ConPTY write end of output pipe
 
   std::thread   read_thread;
   std::mutex    output_mutex;
@@ -44,6 +63,54 @@ auto safe_close(HANDLE h) -> void {
   if (h && h != INVALID_HANDLE_VALUE) CloseHandle(h);
 }
 
+// Strip VT/ANSI escape sequences and control characters from raw ConPTY output.
+// Keeps printable text and newlines (\n).  This is a minimal cleaner so that
+// ConPTY output is readable until a full VT state-machine is implemented.
+auto strip_vt(std::string_view data) -> std::string {
+  std::string out;
+  out.reserve(data.size());
+  size_t i = 0;
+  while (i < data.size()) {
+    auto c = static_cast<unsigned char>(data[i]);
+
+    if (c == 0x1b && i + 1 < data.size()) {
+      // --- CSI  \x1b[  ---
+      if (data[i + 1] == '[') {
+        i += 2;
+        // Skip parameter bytes 0x30–0x3F
+        while (i < data.size() && data[i] >= 0x30 && data[i] <= 0x3F) ++i;
+        // Skip intermediate bytes 0x20–0x2F
+        while (i < data.size() && data[i] >= 0x20 && data[i] <= 0x2F) ++i;
+        // Final byte 0x40–0x7E
+        if (i < data.size() && data[i] >= 0x40 && data[i] <= 0x7E) ++i;
+        continue;
+      }
+      // --- OSC  \x1b]  ---
+      if (data[i + 1] == ']') {
+        i += 2;
+        while (i < data.size() && data[i] != 0x07 && data[i] != 0x1b) ++i;
+        if (i < data.size() && data[i] == 0x07) { ++i; continue; }
+        if (i + 1 < data.size() && data[i] == 0x1b && data[i+1] == '\\') { i += 2; continue; }
+        continue;
+      }
+      // Other two-byte escapes \x1b followed by one byte 0x40–0x5F
+      if (data[i + 1] >= 0x40 && data[i + 1] <= 0x5F) {
+        i += 2; continue;
+      }
+      // Skip bare ESC
+      ++i; continue;
+    }
+
+    // Keep newlines and printable characters.
+    // Drop \r and other C0 controls.
+    if (c == '\n' || (c >= 0x20 && c < 0x7F) || c >= 0x80) {
+      out += static_cast<char>(c);
+    }
+    ++i;
+  }
+  return out;
+}
+
 void read_thread_fn(shell_impl* p) {
   std::string buffer;
   char read_buf[4096];
@@ -52,7 +119,7 @@ void read_thread_fn(shell_impl* p) {
 
   while (p->running.load()) {
     DWORD bytes_read = 0;
-    BOOL ok = ReadFile(p->output_read, read_buf, sizeof(read_buf), &bytes_read, nullptr);
+    BOOL ok = ReadFile(p->output_pipe, read_buf, sizeof(read_buf), &bytes_read, nullptr);
 
     if (!ok || bytes_read == 0) {
       p->running.store(false);
@@ -60,26 +127,19 @@ void read_thread_fn(shell_impl* p) {
       break;
     }
 
-    buffer.append(read_buf, bytes_read);
+    // Strip VT/ANSI escape sequences before line-splitting.
+    std::string cleaned = strip_vt({read_buf, bytes_read});
+    buffer.append(cleaned);
 
     while (true) {
-      size_t crlf_pos = buffer.find("\r\n");
-      size_t lf_pos   = buffer.find('\n');
+      size_t pos = buffer.find('\n');
+      if (pos == std::string::npos) break;
 
-      size_t split_pos = std::string::npos;
-      if (crlf_pos != std::string::npos && (lf_pos == std::string::npos || crlf_pos <= lf_pos)) {
-        split_pos = crlf_pos;
-      } else if (lf_pos != std::string::npos) {
-        split_pos = lf_pos;
-      }
+      std::string line = buffer.substr(0, pos);
+      buffer.erase(0, pos + 1);
 
-      if (split_pos == std::string::npos) break;
-
-      std::string line = buffer.substr(0, split_pos);
-
-      size_t erase_len = (split_pos + 1 < buffer.size() && buffer[split_pos] == '\r' &&
-                          buffer[split_pos + 1] == '\n') ? 2 : 1;
-      buffer.erase(0, split_pos + erase_len);
+      // Drop trailing \r that might remain (e.g. after stripping \r\n → \n).
+      while (!line.empty() && line.back() == '\r') line.pop_back();
 
       {
         std::lock_guard<std::mutex> lock(p->output_mutex);
@@ -119,75 +179,124 @@ void read_thread_fn(shell_impl* p) {
 // ===========================================================================
 // make_shell
 // ===========================================================================
-// Uses plain pipe redirection (stdin/stdout/stderr) for the child process.
-// ConPTY (pseudoconsole) is not used because it fails with 0xc0000142
-// when the parent is a GUI-subsystem process on some Windows builds.
+// Uses CreatePseudoConsole (ConPTY) so that PowerShell behaves as a real
+// terminal: ANSI colours, cursor state, screen dimensions, etc.
 
 auto make_shell(shell_settings const& settings)
   -> std::expected<std::unique_ptr<shell>, std::error_code> {
-  (void)settings;  // cols/rows ignored without ConPTY
+  // Validate dimensions — default to 120x40 if zero.
+  uint32_t const cols = settings.cols ? settings.cols : 120;
+  uint32_t const rows = settings.rows ? settings.rows : 40;
 
+  // 1. Temporarily allocate a console so CreatePseudoConsole can succeed
+  //    in a GUI-subsystem process (workaround for 0xc0000142).
+  if (!AllocConsole())
+    return std::unexpected(make_win32_error());
+
+  // Hide the console window so it doesn't flash on screen.
+  HWND const hwndConsole = GetConsoleWindow();
+  if (hwndConsole) ShowWindow(hwndConsole, SW_HIDE);
+
+  // 2. Create anonymous pipes for ConPTY I/O.
   SECURITY_ATTRIBUTES sa{};
   sa.nLength = sizeof(SECURITY_ATTRIBUTES);
   sa.bInheritHandle = TRUE;
   sa.lpSecurityDescriptor = nullptr;
 
-  HANDLE hInputRead  = nullptr;
-  HANDLE hInputWrite = nullptr;
-  HANDLE hOutputRead = nullptr;
-  HANDLE hOutputWrite = nullptr;
-
-  if (!CreatePipe(&hInputRead, &hInputWrite, &sa, 0))
-    return std::unexpected(make_win32_error());
-  if (!CreatePipe(&hOutputRead, &hOutputWrite, &sa, 0)) {
-    safe_close(hInputRead); safe_close(hInputWrite);
+  // Input pipe: parent writes (hInWrite) → ConPTY reads (hInRead) → child stdin
+  HANDLE hInRead  = nullptr;
+  HANDLE hInWrite = nullptr;
+  if (!CreatePipe(&hInRead, &hInWrite, &sa, 0)) {
+    FreeConsole();
     return std::unexpected(make_win32_error());
   }
 
-  // Mark parent-side handles as non-inheritable.
-  if (!SetHandleInformation(hInputWrite, HANDLE_FLAG_INHERIT, 0)) {
-    safe_close(hInputRead); safe_close(hInputWrite);
-    safe_close(hOutputRead); safe_close(hOutputWrite);
-    return std::unexpected(make_win32_error());
-  }
-  if (!SetHandleInformation(hOutputRead, HANDLE_FLAG_INHERIT, 0)) {
-    safe_close(hInputRead); safe_close(hInputWrite);
-    safe_close(hOutputRead); safe_close(hOutputWrite);
+  // Output pipe: child stdout → ConPTY writes (hOutWrite) → parent reads (hOutRead)
+  HANDLE hOutRead  = nullptr;
+  HANDLE hOutWrite = nullptr;
+  if (!CreatePipe(&hOutRead, &hOutWrite, &sa, 0)) {
+    safe_close(hInRead); safe_close(hInWrite);
+    FreeConsole();
     return std::unexpected(make_win32_error());
   }
 
-  STARTUPINFOW si{};
-  si.cb = sizeof(STARTUPINFOW);
-  si.dwFlags = STARTF_USESTDHANDLES | STARTF_USESHOWWINDOW;
-  si.hStdInput  = hInputRead;
-  si.hStdOutput = hOutputWrite;
-  si.hStdError  = hOutputWrite;
-  si.wShowWindow = SW_HIDE;
+  // 3. Create the pseudoconsole, passing the child-facing pipe ends.
+  COORD size{ static_cast<SHORT>(cols), static_cast<SHORT>(rows) };
+  HPCON hpc = nullptr;
 
+  HRESULT hr = CreatePseudoConsole(size, hInRead, hOutWrite, 0, &hpc);
+  if (FAILED(hr)) {
+    safe_close(hInRead); safe_close(hInWrite);
+    safe_close(hOutRead); safe_close(hOutWrite);
+    FreeConsole();
+    return std::unexpected(make_win32_error(static_cast<unsigned long>(hr)));
+  }
+
+  // Note: do NOT close hInRead/hOutWrite here. Keep them alive so the
+  // ConPTY can read/write through them. Close in destroy_shell.
+
+  // 4. Prepare EXTENDED STARTUPINFO for ConPTY attachment.
+  //    When using PROC_THREAD_ATTRIBUTE_PSEUDOCONSOLE, hStdInput/Output/Error
+  //    should be NULL — the ConPTY attribute replaces standard handle redirection.
+  STARTUPINFOEXW siex{};
+  siex.StartupInfo.cb = sizeof(STARTUPINFOEXW);
+  siex.StartupInfo.dwFlags = 0;
+
+  // Attach the ConPTY pseudoconsole to the child process.
+  SIZE_T attr_list_size = 0;
+  InitializeProcThreadAttributeList(nullptr, 1, 0, &attr_list_size);
+  auto attr_list = std::make_unique<BYTE[]>(attr_list_size);
+  siex.lpAttributeList = reinterpret_cast<LPPROC_THREAD_ATTRIBUTE_LIST>(attr_list.get());
+  if (!InitializeProcThreadAttributeList(siex.lpAttributeList, 1, 0, &attr_list_size)) {
+    ClosePseudoConsole(hpc);
+    safe_close(hInRead); safe_close(hInWrite);
+    safe_close(hOutRead); safe_close(hOutWrite);
+    FreeConsole();
+    return std::unexpected(make_win32_error());
+  }
+  if (!UpdateProcThreadAttribute(
+        siex.lpAttributeList, 0, PROC_THREAD_ATTRIBUTE_PSEUDOCONSOLE,
+        hpc, sizeof(HPCON), nullptr, nullptr)) {
+    DeleteProcThreadAttributeList(siex.lpAttributeList);
+    ClosePseudoConsole(hpc);
+    safe_close(hInRead); safe_close(hInWrite);
+    safe_close(hOutRead); safe_close(hOutWrite);
+    FreeConsole();
+    return std::unexpected(make_win32_error());
+  }
+
+  // 6. Spawn PowerShell.
   std::wstring cmd_line = L"powershell.exe -NoProfile -NoLogo";
   PROCESS_INFORMATION pi{};
   BOOL created = CreateProcessW(
     nullptr, cmd_line.data(), nullptr, nullptr,
-    TRUE, CREATE_NO_WINDOW,
-    nullptr, nullptr, &si, &pi);
+    FALSE,  // ConPTY handles are passed via attribute list, not inheritance
+    EXTENDED_STARTUPINFO_PRESENT,
+    nullptr, nullptr, &siex.StartupInfo, &pi);
 
-  DWORD create_err = created ? 0 : GetLastError();
-
-  safe_close(hInputRead);
-  safe_close(hOutputWrite);
+  DeleteProcThreadAttributeList(siex.lpAttributeList);
 
   if (!created) {
-    safe_close(hInputWrite); safe_close(hOutputRead);
-    return std::unexpected(make_win32_error(create_err));
+    ClosePseudoConsole(hpc);
+    safe_close(hInRead); safe_close(hInWrite);
+    safe_close(hOutRead); safe_close(hOutWrite);
+    FreeConsole();
+    return std::unexpected(make_win32_error());
   }
 
-  safe_close(pi.hThread);
+  // Now the child is connected to the ConPTY — we can release our console.
+  FreeConsole();
+
+  CloseHandle(pi.hThread);  // Don't need the thread handle.
 
   auto impl_ptr = std::make_unique<shell_impl>();
-  impl_ptr->process     = pi.hProcess;
-  impl_ptr->input_write = hInputWrite;
-  impl_ptr->output_read = hOutputRead;
-  impl_ptr->read_thread = std::thread(read_thread_fn, impl_ptr.get());
+  impl_ptr->process      = pi.hProcess;
+  impl_ptr->hpc          = hpc;
+  impl_ptr->input_pipe   = hInWrite;   // parent write end
+  impl_ptr->output_pipe  = hOutRead;   // parent read end
+  impl_ptr->conpty_input = hInRead;    // ConPTY read end
+  impl_ptr->conpty_output= hOutWrite; // ConPTY write end
+  impl_ptr->read_thread  = std::thread(read_thread_fn, impl_ptr.get());
 
   auto sh = std::make_unique<shell>();
   sh->impl_ = std::move(impl_ptr);
@@ -202,22 +311,33 @@ auto destroy_shell(std::unique_ptr<shell> sh) -> void {
   if (!sh || !sh->impl_) return;
   auto* p = sh->impl_.get();
 
-  if (p->input_write && p->input_write != INVALID_HANDLE_VALUE) {
+  // 1. Send exit command.
+  if (p->input_pipe && p->input_pipe != INVALID_HANDLE_VALUE) {
     DWORD written = 0;
     const char exit_cmd[] = "exit\r\n";
-    WriteFile(p->input_write, exit_cmd, static_cast<DWORD>(sizeof(exit_cmd) - 1), &written, nullptr);
+    WriteFile(p->input_pipe, exit_cmd, static_cast<DWORD>(sizeof(exit_cmd) - 1), &written, nullptr);
   }
 
+  // 2. Wait for process to exit (2 second timeout).
   if (p->process && p->process != INVALID_HANDLE_VALUE) {
     if (WaitForSingleObject(p->process, 2000) != WAIT_OBJECT_0)
       TerminateProcess(p->process, 1);
   }
 
+  // 3. Stop the read thread.
   p->running.store(false);
   if (p->read_thread.joinable()) p->read_thread.join();
 
-  safe_close(p->input_write);
-  safe_close(p->output_read);
+  // 4. Close ConPTY.
+  if (p->hpc) ClosePseudoConsole(p->hpc);
+
+  // 5. Close all pipe handles.
+  safe_close(p->input_pipe);
+  safe_close(p->output_pipe);
+  safe_close(p->conpty_input);
+  safe_close(p->conpty_output);
+
+  // 6. Close remaining handles (process).
   safe_close(p->process);
 }
 
@@ -256,14 +376,30 @@ auto read_shell_output(shell& sh)
 auto write_shell_input(shell& sh, std::string_view data)
   -> std::expected<void, std::error_code> {
 
-  if (!sh.impl_ || !sh.impl_->input_write || sh.impl_->input_write == INVALID_HANDLE_VALUE)
+  if (!sh.impl_ || !sh.impl_->input_pipe || sh.impl_->input_pipe == INVALID_HANDLE_VALUE)
     return std::unexpected(make_win32_error(ERROR_INVALID_HANDLE));
 
   DWORD written = 0;
-  if (!WriteFile(sh.impl_->input_write, data.data(),
+  if (!WriteFile(sh.impl_->input_pipe, data.data(),
                   static_cast<DWORD>(data.size()), &written, nullptr))
     return std::unexpected(make_win32_error());
 
+  return {};
+}
+
+// ===========================================================================
+// resize_shell
+// ===========================================================================
+
+auto resize_shell(shell& sh, uint32_t cols, uint32_t rows)
+  -> std::expected<void, std::error_code> {
+  if (!sh.impl_ || !sh.impl_->hpc)
+    return std::unexpected(make_win32_error(ERROR_INVALID_HANDLE));
+
+  COORD size{ static_cast<SHORT>(cols), static_cast<SHORT>(rows) };
+  HRESULT hr = ResizePseudoConsole(sh.impl_->hpc, size);
+  if (FAILED(hr))
+    return std::unexpected(make_win32_error(static_cast<unsigned long>(hr)));
   return {};
 }
 

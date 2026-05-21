@@ -95,8 +95,6 @@ int main() {
   // 7. State
   terminal::text_buffer buffer(rows);
   terminal::input_handler input;
-  std::string input_line;    // local echo of the current line being typed
-  std::string pending_echo;  // echo chars to consume from shell output
 
   // 8. Create shell
   std::unique_ptr<platform::shell> shell;
@@ -111,63 +109,22 @@ int main() {
     shell = std::move(*shell_result);
   } else {
     shell_failed = true;
+    log_error(shell_result.error(), "Failed to create shell process");
     buffer.append_line("Failed to create shell process.");
   }
 
 
 
-  // Helper: flush input_line to shell on Enter.
-  auto send_line = [&]() {
-    // Append to the last buffer line so it appears on the same line as the prompt.
-    buffer.append_to_last(input_line);
-    // Send command to the shell (with CRLF).
-    std::string cmd = input_line + "\r\n";
-    (void) platform::write_shell_input(*shell, cmd);
-    // Remember visible characters so we can consume the shell's echo.
-    pending_echo = input_line;
-    input_line.clear();
-  };
-
-  // 9. Keyboard callback (WM_KEYDOWN) — non-printable keys only
+  // 9. Keyboard callback — forward all input to the ConPTY shell.
+  //    WM_KEYDOWN exclusively: on_keydown handles everything (printable,
+  //    control keys, arrows, Ctrl combos).  No WM_CHAR needed.
   platform::set_key_callback(window,
     [&](platform::vk_code vk, bool ctrl, bool shift, bool alt) {
       if (!shell || !platform::is_shell_running(*shell)) return;
 
       std::string bytes = input.on_keydown(vk, ctrl, shift, alt);
-
-      if (vk == platform::vk_code::enter) {
-        send_line();
-        return;
-      }
-
-      if (vk == platform::vk_code::backspace) {
-        if (!input_line.empty()) input_line.pop_back();
-        return;
-      }
-
-      // Forward non-printable keys (arrows, Ctrl combos, etc.) to shell.
       if (!bytes.empty()) {
-        bool const is_printable =
-          bytes.size() == 1 && bytes[0] >= 0x20 && bytes[0] < 0x7F;
-        if (!is_printable) {
-          (void) platform::write_shell_input(*shell, bytes);
-        }
-      }
-    });
-
-  // WM_CHAR — printable characters with local echo only (no per-char shell send)
-  platform::set_char_callback(window,
-    [&](uint32_t codepoint) {
-      if (!shell || !platform::is_shell_running(*shell)) return;
-
-      std::string bytes = input.on_char(codepoint);
-      if (!bytes.empty()) {
-        // Local echo: append to the current input line.
-        for (unsigned char c : bytes) {
-          if (c >= 0x20 && c < 0x7F && input_line.size() < cols) {
-            input_line += static_cast<char>(c);
-          }
-        }
+        (void) platform::write_shell_input(*shell, bytes);
       }
     });
 
@@ -180,20 +137,8 @@ int main() {
       auto output = platform::read_shell_output(*shell);
       if (output && !output->empty()) {
         for (auto& line : *output) {
-          // Consume pending echo: skip characters that match what we sent.
-          while (!pending_echo.empty() && !line.empty()) {
-            if (line[0] == pending_echo[0]) {
-              line.erase(line.begin());
-              pending_echo.erase(pending_echo.begin());
-            } else {
-              // Mismatch — the echo must have already been consumed.
-              pending_echo.clear();
-              break;
-            }
-          }
           if (line.empty()) continue;
-          // Skip whitespace-only lines (e.g. stray \r from shell echo).
-          bool const all_ws = line.find_first_not_of(" \t\r\n") == std::string::npos;
+          bool const all_ws = line.find_first_not_of(" \t") == std::string::npos;
           if (all_ws) continue;
           buffer.append_line(std::move(line));
         }
@@ -208,18 +153,8 @@ int main() {
       auto output = platform::read_shell_output(*shell);
       if (output && !output->empty()) {
         for (auto& line : *output) {
-          // Consume pending echo
-          while (!pending_echo.empty() && !line.empty()) {
-            if (line[0] == pending_echo[0]) {
-              line.erase(line.begin());
-              pending_echo.erase(pending_echo.begin());
-            } else {
-              pending_echo.clear();
-              break;
-            }
-          }
           if (line.empty()) continue;
-          bool const all_ws = line.find_first_not_of(" \t\r\n") == std::string::npos;
+          bool const all_ws = line.find_first_not_of(" \t") == std::string::npos;
           if (all_ws) continue;
           buffer.append_line(std::move(line));
         }
@@ -234,18 +169,6 @@ int main() {
 
     for (auto const& line : completed) {
       render_lines.emplace_back(line);
-    }
-
-    // Append input_line to the last buffer line for display
-    // (local echo appears on the same line as the prompt)
-    if (!input_line.empty()) {
-      if (render_lines.empty()) {
-        render_lines.emplace_back(input_line);
-      } else {
-        render_owned.emplace_back(render_lines.back());
-        render_owned.back() += input_line;
-        render_lines.back() = render_owned.back();
-      }
     }
 
     if (!render_lines.empty()) {

@@ -55,4 +55,8 @@ auto destroy_shell(std::unique_ptr<shell> sh) -> void;
 auto write_shell_input(shell& sh, std::string_view data)
   -> std::expected<void, std::error_code>;
 
+// Resize the ConPTY terminal to the given dimensions.
+auto resize_shell(shell& sh, uint32_t cols, uint32_t rows)
+  -> std::expected<void, std::error_code>;
+
 } // namespace betty::platform
