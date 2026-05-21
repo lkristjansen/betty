@@ -446,7 +446,7 @@ auto make_glyph_renderer(d3d_device const& device, window_dimensions const& wind
       uint32_t slot_y = row * p->slot_height;
 
       rasterize_glyph(p->dwrite_factory.Get(), p->font_face.Get(),
-                       14.0f, cp,
+                       18.0f, cp,
                        slot_x, slot_y,
                        p->atlas_width,
                        p->cell_width, p->cell_height,

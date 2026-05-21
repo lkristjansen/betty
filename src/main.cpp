@@ -17,6 +17,7 @@ void log_error(std::error_code ec, std::string_view context) {
                                ec.message(),
                                ec.category().name(),
                                ec.value());
+
   platform::show_error_message("betty", formatted);
 }
 
@@ -75,17 +76,19 @@ int main() {
       platform::default_window_size.height
     }
   );
+  
   if (!renderer_result) {
     log_error(renderer_result.error(), "create glyph renderer");
     return 1;
   }
+
   auto& renderer = *renderer_result;
 
   // 6. Message loop (render on idle)
   while (platform::dispatch_pending_messages()) {
     device.clear(rtv, platform::mocha_base);
     renderer.draw(device, rtv, "betty");
-    auto present_result = swap_chain.present();
+    const auto present_result = swap_chain.present();
     if (!present_result) {
       log_error(present_result.error(), "present");
       return 1;
