@@ -96,4 +96,47 @@ enum class window_show_command : int {
 
 inline constexpr window_show_command default_show_command = window_show_command::show;
 
+// ===========================================================================
+// Abstract virtual-key codes (decoupled from winuser.h constants)
+// ===========================================================================
+
+enum class vk_code : uint32_t {
+  unknown        = 0,
+  // Control keys
+  enter          = 0x01,
+  backspace      = 0x02,
+  tab            = 0x03,
+  escape         = 0x04,
+  space          = 0x05,
+  // Navigation
+  arrow_up       = 0x10,
+  arrow_down     = 0x11,
+  arrow_left     = 0x12,
+  arrow_right    = 0x13,
+  home           = 0x14,
+  end_           = 0x15,
+  page_up        = 0x16,
+  page_down      = 0x17,
+  delete_        = 0x18,
+  insert_        = 0x19,
+  // Function keys
+  f1             = 0x20,
+  f2             = 0x21,
+  f3             = 0x22,
+  f4             = 0x23,
+  f5             = 0x24,
+  f6             = 0x25,
+  f7             = 0x26,
+  f8             = 0x27,
+  f9             = 0x28,
+  f10            = 0x29,
+  f11            = 0x2A,
+  f12            = 0x2B,
+  // Printable ASCII range (codepoint == ASCII value)
+  printable_a    = 'a',
+  printable_z    = 'z',
+  printable_0    = '0',
+  printable_9    = '9',
+};
+
 } // namespace betty::platform

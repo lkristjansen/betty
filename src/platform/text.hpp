@@ -28,6 +28,14 @@ struct glyph_renderer {
   [[nodiscard]] auto draw(d3d_device const& device, d3d_render_target_view const& rtv,
                           std::span<const char> text) const -> std::expected<void, std::error_code>;
 
+  // Draw multiple lines of text starting at a given row.
+  // Each element of `lines` is rendered at row `start_row + i`, column 0.
+  // Lines are truncated at the window's column boundary.
+  // Non-ASCII characters are replaced with '?'.
+  [[nodiscard]] auto draw_text(d3d_device const& device, d3d_render_target_view const& rtv,
+                                std::span<std::string_view const> lines,
+                                uint32_t start_row) const -> std::expected<void, std::error_code>;
+
   ~glyph_renderer();
   glyph_renderer(glyph_renderer&&) noexcept;
   glyph_renderer& operator=(glyph_renderer&&) noexcept;

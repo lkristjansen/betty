@@ -1,7 +1,8 @@
 add_subdirectory(platform)
+add_subdirectory(terminal)
 
 add_executable(betty main.cpp)
-target_link_libraries(betty PRIVATE platform)
+target_link_libraries(betty PRIVATE platform terminal)
 target_compile_features(betty PRIVATE cxx_std_23)
 set_target_properties(betty PROPERTIES
     WIN32_EXECUTABLE TRUE

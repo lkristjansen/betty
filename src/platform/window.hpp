@@ -1,5 +1,6 @@
 #pragma once
 #include <expected>
+#include <functional>
 #include <memory>
 #include <system_error>
 #include <string>
@@ -16,6 +17,12 @@ struct window_settings {
   std::wstring title{ L"betty" };
   window_show_command show_command{ default_show_command };
   // Note: no HINSTANCE — make_window() calls GetModuleHandleW(nullptr) internally.
+};
+
+// Callback storage (heap-allocated; pointer stored via GWLP_USERDATA).
+struct window_callbacks {
+  std::function<void(vk_code, bool ctrl, bool shift, bool alt)> on_key;
+  std::function<void(uint32_t)> on_char;
 };
 
 // Move-only window handle. Closes the window on destruction.
@@ -35,14 +42,23 @@ private:
 
   HWND handle_{ nullptr };
 
+  // Callback storage (heap-allocated; pointer stored via GWLP_USERDATA).
+  std::unique_ptr<window_callbacks> callbacks_;
+
   friend auto make_window(window_settings const&)
     -> std::expected<win32_window, std::error_code>;
   friend auto make_swap_chain(struct d3d_device const&, win32_window const&, struct swap_chain_settings const&)
     -> std::expected<struct d3d_swap_chain, std::error_code>;
+  friend auto set_key_callback(win32_window&, std::function<void(vk_code, bool ctrl, bool shift, bool alt)>) -> void;
+  friend auto set_char_callback(win32_window&, std::function<void(uint32_t)>) -> void;
 };
 
 [[nodiscard]] auto make_window(window_settings const& settings)
   -> std::expected<win32_window, std::error_code>;
+
+// Set key / char callbacks on an existing window.
+auto set_key_callback(win32_window& window, std::function<void(vk_code, bool ctrl, bool shift, bool alt)> cb) -> void;
+auto set_char_callback(win32_window& window, std::function<void(uint32_t codepoint)> cb) -> void;
 
 // Returns false when WM_QUIT is received (application should exit).
 // Wraps PeekMessageW / TranslateMessage / DispatchMessageW internally.

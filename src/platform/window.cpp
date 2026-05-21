@@ -1,5 +1,6 @@
 #include "window.hpp"
 #include "error.hpp"
+#include "types.hpp"
 #define WIN32_LEAN_AND_MEAN
 #define NOMINMAX
 #include <windows.h>
@@ -9,15 +10,96 @@ namespace betty::platform {
 
 namespace {
 
+// Map a Win32 virtual-key code to our abstract vk_code.
+auto map_vk(WPARAM wParam) -> vk_code {
+  switch (static_cast<int>(wParam)) {
+  case VK_RETURN:  return vk_code::enter;
+  case VK_BACK:    return vk_code::backspace;
+  case VK_TAB:     return vk_code::tab;
+  case VK_ESCAPE:  return vk_code::escape;
+  case VK_SPACE:   return vk_code::space;
+  case VK_UP:      return vk_code::arrow_up;
+  case VK_DOWN:    return vk_code::arrow_down;
+  case VK_LEFT:    return vk_code::arrow_left;
+  case VK_RIGHT:   return vk_code::arrow_right;
+  case VK_HOME:    return vk_code::home;
+  case VK_END:     return vk_code::end_;
+  case VK_PRIOR:   return vk_code::page_up;
+  case VK_NEXT:    return vk_code::page_down;
+  case VK_DELETE:  return vk_code::delete_;
+  case VK_INSERT:  return vk_code::insert_;
+  case VK_F1:      return vk_code::f1;
+  case VK_F2:      return vk_code::f2;
+  case VK_F3:      return vk_code::f3;
+  case VK_F4:      return vk_code::f4;
+  case VK_F5:      return vk_code::f5;
+  case VK_F6:      return vk_code::f6;
+  case VK_F7:      return vk_code::f7;
+  case VK_F8:      return vk_code::f8;
+  case VK_F9:      return vk_code::f9;
+  case VK_F10:     return vk_code::f10;
+  case VK_F11:     return vk_code::f11;
+  case VK_F12:     return vk_code::f12;
+  default:
+    // A–Z, 0–9, and other printable ASCII.
+    if ((wParam >= 'A' && wParam <= 'Z') ||
+        (wParam >= '0' && wParam <= '9')) {
+      // Convert A–Z to lowercase to match our vk_code enum.
+      if (wParam >= 'A' && wParam <= 'Z') {
+        return static_cast<vk_code>(wParam - 'A' + 'a');
+      }
+      return static_cast<vk_code>(wParam);
+    }
+    return vk_code::unknown;
+  }
+}
+
+// Retrieve the callbacks pointer from an HWND.
+auto get_callbacks(HWND hwnd) -> window_callbacks* {
+  auto ptr = reinterpret_cast<window_callbacks*>(
+    GetWindowLongPtrW(hwnd, GWLP_USERDATA));
+  return ptr;
+}
+
 // File-static window procedure — not exposed outside this translation unit.
 LRESULT CALLBACK WndProc(HWND hwnd, UINT msg, WPARAM wParam, LPARAM lParam) {
   switch (msg) {
   case WM_CLOSE:
     DestroyWindow(hwnd);
     return 0;
+
   case WM_DESTROY:
+    // Clear the userdata pointer so we don't access freed memory.
+    SetWindowLongPtrW(hwnd, GWLP_USERDATA, 0);
     PostQuitMessage(0);
     return 0;
+
+  case WM_KEYDOWN: {
+    if (auto* cbs = get_callbacks(hwnd)) {
+      if (cbs->on_key) {
+        auto vk = map_vk(wParam);
+        bool const ctrl  = (GetKeyState(VK_CONTROL) & 0x8000) != 0;
+        bool const shift = (GetKeyState(VK_SHIFT)   & 0x8000) != 0;
+        bool const alt   = (GetKeyState(VK_MENU)    & 0x8000) != 0;
+        cbs->on_key(vk, ctrl, shift, alt);
+      }
+    }
+    return 0;
+  }
+
+  case WM_CHAR: {
+    if (auto* cbs = get_callbacks(hwnd)) {
+      if (cbs->on_char) {
+        // WM_CHAR gives us the translated Unicode codepoint.
+        // Skip control characters (they're handled via WM_KEYDOWN).
+        if (wParam >= 0x20) {
+          cbs->on_char(static_cast<uint32_t>(wParam));
+        }
+      }
+    }
+    return 0;
+  }
+
   default:
     return DefWindowProcW(hwnd, msg, wParam, lParam);
   }
@@ -54,7 +136,8 @@ win32_window::~win32_window() {
 }
 
 win32_window::win32_window(win32_window&& other) noexcept
-  : handle_(other.handle_) {
+  : handle_(other.handle_)
+  , callbacks_(std::move(other.callbacks_)) {
   other.handle_ = nullptr;
 }
 
@@ -65,6 +148,7 @@ win32_window& win32_window::operator=(win32_window&& other) noexcept {
     }
     handle_ = other.handle_;
     other.handle_ = nullptr;
+    callbacks_ = std::move(other.callbacks_);
   }
   return *this;
 }
@@ -130,6 +214,12 @@ auto make_window(window_settings const& settings)
 
   win32_window result{ win32_window::empty_tag{} };
   result.handle_ = hwnd;
+  result.callbacks_ = std::make_unique<window_callbacks>();
+
+  // 5. Store the callbacks pointer via GWLP_USERDATA so WndProc can reach it.
+  SetWindowLongPtrW(hwnd, GWLP_USERDATA,
+    reinterpret_cast<LONG_PTR>(result.callbacks_.get()));
+
   return result;
 }
 
@@ -152,6 +242,20 @@ auto dispatch_pending_messages() -> bool {
 auto show_error_message(std::string_view title, std::string_view message) -> void {
   MessageBoxW(nullptr, widen(message).c_str(), widen(title).c_str(),
               MB_OK | MB_ICONERROR);
+}
+
+// --- set_key_callback / set_char_callback ----------------------------------
+
+auto set_key_callback(win32_window& window, std::function<void(vk_code, bool ctrl, bool shift, bool alt)> cb) -> void {
+  if (window.callbacks_) {
+    window.callbacks_->on_key = std::move(cb);
+  }
+}
+
+auto set_char_callback(win32_window& window, std::function<void(uint32_t codepoint)> cb) -> void {
+  if (window.callbacks_) {
+    window.callbacks_->on_char = std::move(cb);
+  }
 }
 
 } // namespace betty::platform

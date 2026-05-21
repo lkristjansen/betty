@@ -26,7 +26,7 @@ namespace betty::platform {
 // ===========================================================================
 
 inline constexpr uint32_t k_font_size_px        = 18u;   // raster font size used everywhere
-inline constexpr uint32_t k_max_glyphs_per_frame = 64u;  // 64 glyphs = 256 vertices, 384 indices
+inline constexpr uint32_t k_max_glyphs_per_frame = 8192u;  // enough for large terminal output
 inline constexpr uint32_t k_vertices_per_quad    = 4u;
 inline constexpr uint32_t k_indices_per_quad     = 6u;
 inline constexpr uint32_t k_max_vertices = k_max_glyphs_per_frame * k_vertices_per_quad;
@@ -752,4 +752,100 @@ auto glyph_renderer::draw(d3d_device const& device,
   return {};
 }
 
+
+// ===========================================================================
+// glyph_renderer::draw_text — multi-line text rendering
+// ===========================================================================
+
+auto glyph_renderer::draw_text(d3d_device const& device,
+                                d3d_render_target_view const& rtv,
+                                std::span<std::string_view const> lines,
+                                uint32_t start_row) const
+  -> std::expected<void, std::error_code> {
+
+  auto* context = device.impl_->context.Get();
+
+  // Compute max columns that fit in the window.
+  uint32_t const max_cols = impl_->window_width / impl_->cell_width;
+  // Compute max rows that fit in the window.
+  uint32_t const max_rows = impl_->window_height / impl_->cell_height;
+
+  // --- 1. Map vertex buffer ------------------------------------------------
+  D3D11_MAPPED_SUBRESOURCE mapped{};
+  HRESULT hr = context->Map(impl_->vertex_buffer.Get(), 0,
+                              D3D11_MAP_WRITE_DISCARD, 0, &mapped);
+  if (FAILED(hr)) {
+    return std::unexpected(make_d3d_error(hr));
+  }
+
+  auto* vertices = static_cast<glyph_vertex*>(mapped.pData);
+  uint32_t quad_count = 0;
+
+  for (uint32_t row_idx = 0; row_idx < lines.size(); ++row_idx) {
+    uint32_t const screen_row = start_row + row_idx;
+    if (screen_row >= max_rows) break;  // off-screen — skip remaining lines
+
+    float const y0 = static_cast<float>(screen_row * impl_->cell_height);
+    float const y1 = y0 + static_cast<float>(impl_->cell_height);
+
+    auto const& line = lines[row_idx];
+    uint32_t const line_len = std::min(static_cast<uint32_t>(line.size()), max_cols);
+
+    for (uint32_t col = 0; col < line_len && quad_count < k_max_glyphs_per_frame; ++col) {
+      unsigned char cp = static_cast<unsigned char>(line[col]);
+
+      // Non-ASCII -> use '?' glyph (codepoint 63).
+      if (cp > 127) cp = '?';
+
+      auto& slot = impl_->glyph_slots[cp];
+      float const x0 = static_cast<float>(col * impl_->cell_width);
+      float const x1 = x0 + static_cast<float>(impl_->cell_width);
+
+      // Quad vertices (top-left, top-right, bottom-right, bottom-left).
+      uint32_t v = quad_count * k_vertices_per_quad;
+      vertices[v + 0] = { x0, y0, slot.u0, slot.v0 };
+      vertices[v + 1] = { x1, y0, slot.u1, slot.v0 };
+      vertices[v + 2] = { x1, y1, slot.u1, slot.v1 };
+      vertices[v + 3] = { x0, y1, slot.u0, slot.v1 };
+
+      ++quad_count;
+    }
+  }
+
+  context->Unmap(impl_->vertex_buffer.Get(), 0);
+
+  if (quad_count == 0) return {};
+
+  // --- 2. Bind pipeline state ----------------------------------------------
+  context->OMSetRenderTargets(1, rtv.impl_->rtv.GetAddressOf(), nullptr);
+  context->OMSetBlendState(impl_->blend_state.Get(), nullptr, 0xFFFFFFFF);
+  context->OMSetDepthStencilState(impl_->depth_state.Get(), 0);
+  context->RSSetState(impl_->rasterizer_state.Get());
+
+  D3D11_VIEWPORT vp{};
+  vp.Width    = static_cast<FLOAT>(impl_->window_width);
+  vp.Height   = static_cast<FLOAT>(impl_->window_height);
+  vp.MinDepth = 0.0f;
+  vp.MaxDepth = 1.0f;
+  context->RSSetViewports(1, &vp);
+
+  context->IASetPrimitiveTopology(D3D11_PRIMITIVE_TOPOLOGY_TRIANGLELIST);
+  context->IASetInputLayout(impl_->input_layout.Get());
+
+  UINT stride = sizeof(glyph_vertex);
+  UINT offset = 0;
+  context->IASetVertexBuffers(0, 1, impl_->vertex_buffer.GetAddressOf(), &stride, &offset);
+  context->IASetIndexBuffer(impl_->index_buffer.Get(), DXGI_FORMAT_R16_UINT, 0);
+
+  context->VSSetShader(impl_->vertex_shader.Get(), nullptr, 0);
+  context->VSSetConstantBuffers(0, 1, impl_->constant_buffer.GetAddressOf());
+  context->PSSetShader(impl_->pixel_shader.Get(), nullptr, 0);
+  context->PSSetShaderResources(0, 1, impl_->atlas_srv.GetAddressOf());
+  context->PSSetSamplers(0, 1, impl_->sampler_state.GetAddressOf());
+
+  // --- 3. Draw -------------------------------------------------------------
+  context->DrawIndexed(quad_count * k_indices_per_quad, 0, 0);
+
+  return {};
+}
 } // namespace betty::platform
