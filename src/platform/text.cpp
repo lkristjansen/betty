@@ -132,6 +132,7 @@ struct glyph_renderer::impl {
   // Font metrics
   uint32_t cell_width  = 0;
   uint32_t cell_height = 0;
+  float    baseline_y  = 0.0f;  // distance from cell top to baseline (px)
 
   // Glyph atlas
   ComPtr<ID3D11Texture2D>          atlas_texture;
@@ -197,7 +198,8 @@ auto compile_shader(const char* source, const char* entry_point, const char* tar
 // Get the font face (v1 interface) and metrics from the text format.
 auto init_font_face(IDWriteFactory* factory, IDWriteTextFormat* format,
                     uint32_t& cell_width, uint32_t& cell_height,
-                    ComPtr<IDWriteFontFace1>& font_face) -> HRESULT {
+                    ComPtr<IDWriteFontFace1>& font_face,
+                    uint32_t& font_ascent, uint32_t& font_design_units_per_em) -> HRESULT {
   // 1. Get font face via the font collection.
   ComPtr<IDWriteFontCollection> font_collection;
   HRESULT hr = format->GetFontCollection(font_collection.GetAddressOf());
@@ -228,6 +230,8 @@ auto init_font_face(IDWriteFactory* factory, IDWriteTextFormat* format,
   // 2. Get font metrics (design units).
   DWRITE_FONT_METRICS font_metrics{};
   font_face->GetMetrics(&font_metrics);
+  font_ascent                = font_metrics.ascent;
+  font_design_units_per_em   = font_metrics.designUnitsPerEm;
 
   // 3. Get cell dimensions from a representative text layout.
   ComPtr<IDWriteTextLayout> layout;
@@ -253,6 +257,7 @@ auto rasterize_glyph(IDWriteFactory* factory, IDWriteFontFace1* font_face,
                      uint32_t slot_x, uint32_t slot_y,
                      uint32_t atlas_width,
                      uint32_t cell_width, uint32_t cell_height,
+                     float baseline_y,
                      std::vector<uint8_t>& staging_buffer) -> bool {
   // 1. Get glyph index.
   UINT32 const cp32 = static_cast<UINT32>(codepoint);
@@ -325,11 +330,12 @@ auto rasterize_glyph(IDWriteFactory* factory, IDWriteFontFace1* font_face,
   int const cell_content_x = static_cast<int>(slot_x) + k_glyph_padding;
   int const cell_content_y = static_cast<int>(slot_y) + k_glyph_padding;
 
+  // Center horizontally, but align vertically by the font baseline.
+  // bounds.top is negative (above the baseline), so adding it shifts
+  // the bitmap up so that the baseline lands at baseline_y.
   int const offset_x = (static_cast<int>(cell_width) - static_cast<int>(bounds_width)) / 2;
-  int const offset_y = (static_cast<int>(cell_height) - static_cast<int>(bounds_height)) / 2;
-
   int const origin_x = cell_content_x + offset_x;
-  int const origin_y = cell_content_y + offset_y;
+  int const origin_y = cell_content_y + static_cast<int>(std::round(baseline_y)) + bounds.top;
 
   for (UINT32 by = 0; by < bounds_height; ++by) {
     int const dy = origin_y + static_cast<int>(by);
@@ -394,16 +400,25 @@ auto make_glyph_renderer(d3d_device const& device, window_dimensions const& wind
     DWRITE_FONT_WEIGHT_NORMAL,
     DWRITE_FONT_STYLE_NORMAL,
     DWRITE_FONT_STRETCH_NORMAL,
-    14.0f,
+    18.0f,
     L"en-US",
     p->text_format.GetAddressOf()
   );
   if (FAILED(hr)) return std::unexpected(make_d3d_error(hr));
 
   // --- 3. Get font face & metrics -------------------------------------------
+  uint32_t font_ascent = 0;
+  uint32_t font_design_units_per_em = 0;
   hr = init_font_face(p->dwrite_factory.Get(), p->text_format.Get(),
                        p->cell_width, p->cell_height,
-                       p->font_face);
+                       p->font_face,
+                       font_ascent, font_design_units_per_em);
+  if (FAILED(hr)) return std::unexpected(make_d3d_error(hr));
+
+  // Compute baseline position: ascent converted to pixels at raster size.
+  constexpr float raster_font_size = 18.0f;
+  p->baseline_y = static_cast<float>(font_ascent) * raster_font_size
+                / static_cast<float>(font_design_units_per_em);
   if (FAILED(hr)) return std::unexpected(make_d3d_error(hr));
 
   // --- 4. Determine atlas layout --------------------------------------------
@@ -458,6 +473,7 @@ auto make_glyph_renderer(d3d_device const& device, window_dimensions const& wind
                        slot_x, slot_y,
                        p->atlas_width,
                        p->cell_width, p->cell_height,
+                       p->baseline_y,
                        staging_buffer);
 
       // Precompute UVs for this slot (content area, excluding padding).
