@@ -6,8 +6,6 @@
 // Friends declared in gfx.hpp (glyph_renderer, make_* factories) need the
 // complete type to access impl_->device / impl_->context / impl_->rtv.
 
-#define WIN32_LEAN_AND_MEAN
-#define NOMINMAX
 #include <d3d11.h>
 #include <dxgi1_3.h>
 #include <wrl/client.h>

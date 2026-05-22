@@ -26,8 +26,8 @@ TEST_CASE("Input — printable digit", "[input][printable]") {
 
 TEST_CASE("Input — printable punctuation", "[input][printable]") {
     input_handler h;
-    // Use characters that don't collide with vk_code enum values
-    // (e.g. '!' = 0x21 = vk_code::f2).  '.' (0x2E) and '/' (0x2F) are safe.
+    // Punctuation characters ('.', '/', etc.) don't collide with vk_code
+    // enum values since function keys now live above 0xFF.
     CHECK(h.on_keydown(static_cast<vk_code>('.'), false, false, false) == ".");
     CHECK(h.on_keydown(static_cast<vk_code>('/'), false, false, false) == "/");
 }

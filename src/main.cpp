@@ -133,6 +133,7 @@ int main() {
 
   // 10. Message loop
   int exit_code = 0;
+  bool exit_notified = false;
   while (platform::dispatch_pending_messages()) {
     device.clear(rtv, platform::mocha_base);
 
@@ -143,10 +144,9 @@ int main() {
         grid.write_bytes(raw);
       }
     } else if (shell && !platform::is_shell_running(*shell)) {
-      static bool shown_exit = false;
-      if (!shown_exit) {
+      if (!exit_notified) {
         grid.write_bytes("[shell exited]\r\n");
-        shown_exit = true;
+        exit_notified = true;
       }
       // Drain remaining output
       std::string raw = platform::read_shell_output_raw(*shell);
@@ -175,8 +175,7 @@ int main() {
     }
   }
 
-  // 11. Cleanup — shell's destructor sends "exit\r\n", waits for graceful
-  //     shutdown, then releases all resources (ConPTY, pipes, read thread).
+  // shell goes out of scope here — its destructor handles cleanup.
 
   return exit_code;
 }

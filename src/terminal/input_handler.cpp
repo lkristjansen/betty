@@ -9,7 +9,7 @@ namespace betty::terminal {
 namespace {
 
 // CSI (Control Sequence Introducer) prefix.
-inline constexpr char const k_csi[] = "\x1B[";
+inline constexpr std::string_view k_csi = "\x1B[";
 
 auto ansi_csi(char suffix) -> std::string {
   return std::string(k_csi) + suffix;
@@ -30,18 +30,10 @@ auto input_handler::on_keydown(vk_code vk, bool control, bool shift, bool alt) c
 
   // --- Ctrl modifiers -------------------------------------------------------
   if (control && !alt) {
-    switch (vk) {
-    case vk_code::printable_a: return "\x01";  // Ctrl+A → SOH
-    case vk_code::printable_z: return "\x1A";  // Ctrl+Z → SUB
-    // Ctrl+C → ETX (interrupt signal)
-    // We handle printable chars 'a'–'z' generically below.
-    default:
-      if (vk >= vk_code::printable_a && vk <= vk_code::printable_z) {
-        // Ctrl+letter → ASCII 0x01–0x1A
-        char c = static_cast<char>(static_cast<uint32_t>(vk) - static_cast<uint32_t>(vk_code::printable_a) + 1);
-        return std::string(1, c);
-      }
-      break;
+    // Ctrl+letter → ASCII 0x01–0x1A (e.g. Ctrl+A → SOH, Ctrl+C → ETX).
+    if (vk >= vk_code::printable_a && vk <= vk_code::printable_z) {
+      char c = static_cast<char>(static_cast<uint32_t>(vk) - static_cast<uint32_t>(vk_code::printable_a) + 1);
+      return std::string(1, c);
     }
   }
 

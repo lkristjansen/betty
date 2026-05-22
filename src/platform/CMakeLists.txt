@@ -7,6 +7,7 @@ add_library(platform STATIC
 )
 
 target_include_directories(platform PUBLIC ${CMAKE_CURRENT_SOURCE_DIR})
+target_compile_definitions(platform PRIVATE WIN32_LEAN_AND_MEAN NOMINMAX)
 target_compile_features(platform PUBLIC cxx_std_23)
 
 if(MSVC)

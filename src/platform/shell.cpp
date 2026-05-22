@@ -1,6 +1,5 @@
 #include "shell.hpp"
-#define WIN32_LEAN_AND_MEAN
-#define NOMINMAX
+#include "win32_handle.hpp"
 #include <windows.h>
 
 // Try to include the ConPTY header; if the SDK has it, declarations are
@@ -30,26 +29,16 @@ extern "C" void WINAPI ClosePseudoConsole(HPCON hPC);
 namespace betty::platform {
 
 // ===========================================================================
-// Forward-declared helpers
-// ===========================================================================
-
-namespace {
-  auto safe_close(HANDLE h) -> void {
-    if (h && h != INVALID_HANDLE_VALUE) CloseHandle(h);
-  }
-}
-
-// ===========================================================================
 // shell_impl — PIMPL with all Windows types hidden here
 // ===========================================================================
 
 struct shell_impl {
-  HANDLE  process{ nullptr };
-  HPCON   hpc{ nullptr };          // Pseudoconsole handle
-  HANDLE  input_pipe{ nullptr };   // Parent write end of input pipe
-  HANDLE  output_pipe{ nullptr };  // Parent read end of output pipe
-  HANDLE  conpty_input{ nullptr }; // ConPTY read end of input pipe
-  HANDLE  conpty_output{ nullptr };// ConPTY write end of output pipe
+  scoped_handle  process;
+  scoped_conpty  hpc;                 // Pseudoconsole handle
+  scoped_pipe    input_pipe;          // Parent write end of input pipe
+  scoped_pipe    output_pipe;         // Parent read end of output pipe
+  scoped_pipe    conpty_input;        // ConPTY read end of input pipe
+  scoped_pipe    conpty_output;       // ConPTY write end of output pipe
 
   std::jthread  read_thread;
   std::mutex    output_mutex;
@@ -57,8 +46,8 @@ struct shell_impl {
   std::condition_variable output_cv;
 
   // Destructor handles the hard resource cleanup.
-  // destroy_shell() should be called first to send "exit" and wait for
-  // the child process to terminate gracefully.
+  // shell::~shell() sends "exit" and waits for the child process before
+  // this destructor runs, so the handles are ready to be released.
   ~shell_impl() {
     // 1. Cancel any blocking synchronous I/O the read thread might be
     //    stuck on (ReadFile on the output pipe).  This must happen
@@ -68,24 +57,17 @@ struct shell_impl {
       CancelSynchronousIo(read_thread.native_handle());
     }
 
-    // 2. Close the ConPTY.  This also closes the write-end of the
+    // 2. Close the ConPTY early.  This also closes the write-end of the
     //    output pipe (conpty_output), causing ReadFile to return EOF
     //    as a secondary unblocking mechanism.
-    if (hpc) {
-      ClosePseudoConsole(hpc);
-      hpc = nullptr;
-    }
+    hpc.reset();
 
     // 3. jthread's destructor automatically calls request_stop() then
     //    join().  The thread will have already exited due to step 1
     //    (ReadFile was cancelled) so join() returns promptly.
 
-    // 4. Close all remaining handles.
-    safe_close(input_pipe);
-    safe_close(output_pipe);
-    safe_close(conpty_input);
-    safe_close(conpty_output);
-    safe_close(process);
+    // 4. All remaining handles (process, pipes) are closed automatically
+    //    by their scoped_* destructors when shell_impl is destroyed.
   }
 
   shell_impl(shell_impl const&) = delete;
@@ -99,17 +81,17 @@ shell::~shell() {
   auto* p = impl_.get();
 
   // 1. Send exit command to give the shell a chance to terminate gracefully.
-  if (p->input_pipe && p->input_pipe != INVALID_HANDLE_VALUE) {
+  if (p->input_pipe) {
     DWORD written = 0;
     const char exit_cmd[] = "exit\r\n";
-    WriteFile(p->input_pipe, exit_cmd, static_cast<DWORD>(sizeof(exit_cmd) - 1), &written, nullptr);
+    WriteFile(p->input_pipe.get(), exit_cmd, static_cast<DWORD>(sizeof(exit_cmd) - 1), &written, nullptr);
   }
 
   // 2. Wait for process to exit (2 second timeout),
   //    then forcefully terminate if it didn't.
-  if (p->process && p->process != INVALID_HANDLE_VALUE) {
-    if (WaitForSingleObject(p->process, 2000) != WAIT_OBJECT_0)
-      TerminateProcess(p->process, 1);
+  if (p->process) {
+    if (WaitForSingleObject(p->process.get(), 2000) != WAIT_OBJECT_0)
+      TerminateProcess(p->process.get(), 1);
   }
 
   // 3. impl_ is destroyed here, which invokes shell_impl's destructor.
@@ -121,7 +103,7 @@ shell& shell::operator=(shell&&) noexcept = default;
 shell::shell(empty_tag) noexcept {}
 
 auto shell::native_handle() const noexcept -> shell_handle {
-  return shell_handle{ impl_ ? impl_->process : nullptr };
+  return shell_handle{ impl_ ? impl_->process.get() : nullptr };
 }
 
 namespace {
@@ -131,7 +113,7 @@ void read_thread_fn(shell_impl* p, std::stop_token stoken) {
 
   while (!stoken.stop_requested()) {
     DWORD bytes_read = 0;
-    BOOL ok = ReadFile(p->output_pipe, read_buf, sizeof(read_buf), &bytes_read, nullptr);
+    BOOL ok = ReadFile(p->output_pipe.get(), read_buf, sizeof(read_buf), &bytes_read, nullptr);
 
     if (!ok || bytes_read == 0) {
       p->output_cv.notify_one();
@@ -176,36 +158,41 @@ auto make_shell(shell_settings const& settings)
   sa.lpSecurityDescriptor = nullptr;
 
   // Input pipe: parent writes (hInWrite) → ConPTY reads (hInRead) → child stdin
-  HANDLE hInRead  = nullptr;
-  HANDLE hInWrite = nullptr;
-  if (!CreatePipe(&hInRead, &hInWrite, &sa, 0)) {
+  HANDLE hInRead_raw  = nullptr;
+  HANDLE hInWrite_raw = nullptr;
+  if (!CreatePipe(&hInRead_raw, &hInWrite_raw, &sa, 0)) {
     FreeConsole();
     return std::unexpected(make_win32_error());
   }
+  scoped_pipe hInRead(hInRead_raw);
+  scoped_pipe hInWrite(hInWrite_raw);
 
   // Output pipe: child stdout → ConPTY writes (hOutWrite) → parent reads (hOutRead)
-  HANDLE hOutRead  = nullptr;
-  HANDLE hOutWrite = nullptr;
-  if (!CreatePipe(&hOutRead, &hOutWrite, &sa, 0)) {
-    safe_close(hInRead); safe_close(hInWrite);
+  HANDLE hOutRead_raw  = nullptr;
+  HANDLE hOutWrite_raw = nullptr;
+  if (!CreatePipe(&hOutRead_raw, &hOutWrite_raw, &sa, 0)) {
     FreeConsole();
     return std::unexpected(make_win32_error());
   }
+  scoped_pipe hOutRead(hOutRead_raw);
+  scoped_pipe hOutWrite(hOutWrite_raw);
 
   // 3. Create the pseudoconsole, passing the child-facing pipe ends.
+  //    scoped_conpty is declared LAST so it is destroyed FIRST on error —
+  //    ClosePseudoConsole must run before the pipe handles are closed.
   COORD size{ static_cast<SHORT>(cols), static_cast<SHORT>(rows) };
-  HPCON hpc = nullptr;
+  HPCON hpc_raw = nullptr;
 
-  HRESULT hr = CreatePseudoConsole(size, hInRead, hOutWrite, 0, &hpc);
+  HRESULT hr = CreatePseudoConsole(size, hInRead.get(), hOutWrite.get(), 0, &hpc_raw);
   if (FAILED(hr)) {
-    safe_close(hInRead); safe_close(hInWrite);
-    safe_close(hOutRead); safe_close(hOutWrite);
     FreeConsole();
     return std::unexpected(make_win32_error(static_cast<unsigned long>(hr)));
   }
+  scoped_conpty hpc(hpc_raw);
 
   // Note: do NOT close hInRead/hOutWrite here. Keep them alive so the
-  // ConPTY can read/write through them. Close in destroy_shell.
+  // ConPTY can read/write through them. Their ownership is transferred to
+  // shell_impl at the end of this function via std::move.
 
   // 4. Prepare EXTENDED STARTUPINFO for ConPTY attachment.
   //    When using PROC_THREAD_ATTRIBUTE_PSEUDOCONSOLE, hStdInput/Output/Error
@@ -220,19 +207,13 @@ auto make_shell(shell_settings const& settings)
   auto attr_list = std::make_unique<BYTE[]>(attr_list_size);
   siex.lpAttributeList = reinterpret_cast<LPPROC_THREAD_ATTRIBUTE_LIST>(attr_list.get());
   if (!InitializeProcThreadAttributeList(siex.lpAttributeList, 1, 0, &attr_list_size)) {
-    ClosePseudoConsole(hpc);
-    safe_close(hInRead); safe_close(hInWrite);
-    safe_close(hOutRead); safe_close(hOutWrite);
     FreeConsole();
     return std::unexpected(make_win32_error());
   }
   if (!UpdateProcThreadAttribute(
         siex.lpAttributeList, 0, PROC_THREAD_ATTRIBUTE_PSEUDOCONSOLE,
-        hpc, sizeof(HPCON), nullptr, nullptr)) {
+        hpc.get(), sizeof(HPCON), nullptr, nullptr)) {
     DeleteProcThreadAttributeList(siex.lpAttributeList);
-    ClosePseudoConsole(hpc);
-    safe_close(hInRead); safe_close(hInWrite);
-    safe_close(hOutRead); safe_close(hOutWrite);
     FreeConsole();
     return std::unexpected(make_win32_error());
   }
@@ -252,9 +233,6 @@ auto make_shell(shell_settings const& settings)
   DeleteProcThreadAttributeList(siex.lpAttributeList);
 
   if (!created) {
-    ClosePseudoConsole(hpc);
-    safe_close(hInRead); safe_close(hInWrite);
-    safe_close(hOutRead); safe_close(hOutWrite);
     FreeConsole();
     return std::unexpected(make_win32_error());
   }
@@ -262,15 +240,15 @@ auto make_shell(shell_settings const& settings)
   // Now the child is connected to the ConPTY — we can release our console.
   FreeConsole();
 
-  CloseHandle(pi.hThread);  // Don't need the thread handle.
+  scoped_handle thread_handle(pi.hThread);  // auto-closed on scope exit.
 
   auto impl_ptr = std::make_unique<shell_impl>();
-  impl_ptr->process      = pi.hProcess;
-  impl_ptr->hpc          = hpc;
-  impl_ptr->input_pipe   = hInWrite;   // parent write end
-  impl_ptr->output_pipe  = hOutRead;   // parent read end
-  impl_ptr->conpty_input = hInRead;    // ConPTY read end
-  impl_ptr->conpty_output= hOutWrite; // ConPTY write end
+  impl_ptr->process      = scoped_handle(pi.hProcess);
+  impl_ptr->hpc          = std::move(hpc);
+  impl_ptr->input_pipe   = std::move(hInWrite);
+  impl_ptr->output_pipe  = std::move(hOutRead);
+  impl_ptr->conpty_input = std::move(hInRead);
+  impl_ptr->conpty_output = std::move(hOutWrite);
   impl_ptr->read_thread  = std::jthread(
     [p = impl_ptr.get()](std::stop_token stoken) { read_thread_fn(p, stoken); }
   );
@@ -285,12 +263,12 @@ auto make_shell(shell_settings const& settings)
 // ===========================================================================
 
 auto is_shell_running(shell const& sh) -> bool {
-  if (!sh.impl_ || !sh.impl_->process || sh.impl_->process == INVALID_HANDLE_VALUE) {
+  if (!sh.impl_ || !sh.impl_->process) {
     return false;
   }
   // Poll the process handle directly — more accurate than a flag that
   // the read thread can set to false for unrelated I/O errors.
-  return WaitForSingleObject(sh.impl_->process, 0) != WAIT_OBJECT_0;
+  return WaitForSingleObject(sh.impl_->process.get(), 0) != WAIT_OBJECT_0;
 }
 
 // ===========================================================================
@@ -315,11 +293,11 @@ auto read_shell_output_raw(shell& sh) -> std::string {
 auto write_shell_input(shell& sh, std::string_view data)
   -> std::expected<void, std::error_code> {
 
-  if (!sh.impl_ || !sh.impl_->input_pipe || sh.impl_->input_pipe == INVALID_HANDLE_VALUE)
+  if (!sh.impl_ || !sh.impl_->input_pipe)
     return std::unexpected(make_win32_error(ERROR_INVALID_HANDLE));
 
   DWORD written = 0;
-  if (!WriteFile(sh.impl_->input_pipe, data.data(),
+  if (!WriteFile(sh.impl_->input_pipe.get(), data.data(),
                   static_cast<DWORD>(data.size()), &written, nullptr))
     return std::unexpected(make_win32_error());
 
@@ -336,7 +314,7 @@ auto resize_shell(shell& sh, uint32_t cols, uint32_t rows)
     return std::unexpected(make_win32_error(ERROR_INVALID_HANDLE));
 
   COORD size{ static_cast<SHORT>(cols), static_cast<SHORT>(rows) };
-  HRESULT hr = ResizePseudoConsole(sh.impl_->hpc, size);
+  HRESULT hr = ResizePseudoConsole(sh.impl_->hpc.get(), size);
   if (FAILED(hr))
     return std::unexpected(make_win32_error(static_cast<unsigned long>(hr)));
   return {};
