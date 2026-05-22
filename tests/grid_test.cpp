@@ -456,3 +456,287 @@ TEST_CASE("Grid — write_char on 0x0 grid does not crash", "[grid][edge]") {
     g.write_char(U'a');
     SUCCEED("write_char on zero-size grid did not crash");
 }
+
+// ===========================================================================
+// Task 8 — Erase in Display (ED)
+// ===========================================================================
+
+TEST_CASE("Grid — erase_display mode 0 clears from cursor to end", "[grid][erase]") {
+    terminal_grid g(5, 3);
+    // Fill rows with 'X' using explicit CUP positioning.
+    g.write_bytes("\x1B[1;1HXXXXX");  // row 0
+    g.write_bytes("\x1B[2;1HXXXXX");  // row 1
+    g.write_bytes("\x1B[3;1HXXXX");   // row 2: 4 X's (skip last to avoid scroll)
+    // Move to (1,2).
+    action mv;
+    mv.type = action_type::move_cursor;
+    mv.row = 1; mv.col = 2;
+    g.apply(mv);
+
+    // Erase from cursor to end.
+    action ed;
+    ed.type = action_type::erase_display;
+    ed.count = 0;
+    g.apply(ed);
+
+    // All cells BEFORE cursor should still be 'X'.
+    CHECK(g.cell(0, 0).codepoint == U'X');
+    CHECK(g.cell(0, 1).codepoint == U'X');
+    CHECK(g.cell(0, 2).codepoint == U'X');
+    CHECK(g.cell(1, 0).codepoint == U'X');
+    CHECK(g.cell(1, 1).codepoint == U'X');
+
+    // Cells FROM cursor should be space.
+    CHECK(g.cell(1, 2).codepoint == U' ');
+    CHECK(g.cell(1, 3).codepoint == U' ');
+    CHECK(g.cell(1, 4).codepoint == U' ');
+    CHECK(g.cell(2, 0).codepoint == U' ');
+    CHECK(g.cell(2, 4).codepoint == U' ');
+}
+
+TEST_CASE("Grid — erase_display mode 1 clears from beginning to cursor", "[grid][erase]") {
+    terminal_grid g(5, 3);
+    // Fill rows with 'X' using explicit CUP positioning to avoid
+    // auto-wrap/scroll corrupting the last row.
+    g.write_bytes("\x1B[1;1HXXXXX");  // row 0: 5 X's
+    g.write_bytes("\x1B[2;1HXXXXX");  // row 1: 5 X's
+    g.write_bytes("\x1B[3;1HXXXX");   // row 2: 4 X's (skip last to avoid scroll)
+
+    // Move cursor to (1, 2).
+    action mv;
+    mv.type = action_type::move_cursor;
+    mv.row = 1; mv.col = 2;
+    g.apply(mv);
+
+    action ed;
+    ed.type = action_type::erase_display;
+    ed.count = 1;
+    g.apply(ed);
+
+    // Cells up to and including cursor should be space.
+    CHECK(g.cell(0, 0).codepoint == U' ');
+    CHECK(g.cell(0, 1).codepoint == U' ');
+    CHECK(g.cell(1, 0).codepoint == U' ');
+    CHECK(g.cell(1, 1).codepoint == U' ');
+    CHECK(g.cell(1, 2).codepoint == U' ');
+
+    // Cells after cursor should still be 'X'.
+    CHECK(g.cell(1, 3).codepoint == U'X');
+    CHECK(g.cell(2, 0).codepoint == U'X');
+}
+
+TEST_CASE("Grid — erase_display mode 2 clears entire screen", "[grid][erase]") {
+    terminal_grid g(5, 3);
+    // Fill with 'X' using CUP + write_bytes.
+    g.write_bytes("\x1B[1;1HXXXXX");
+    g.write_bytes("\x1B[2;1HXXXXX");
+    g.write_bytes("\x1B[3;1HXXXXX");
+
+    action ed;
+    ed.type = action_type::erase_display;
+    ed.count = 2;
+    g.apply(ed);
+
+    // Every cell should now be space.
+    for (uint32_t r = 0; r < 3; ++r)
+        for (uint32_t c = 0; c < 5; ++c)
+            CHECK(g.cell(r, c).codepoint == U' ');
+}
+
+TEST_CASE("Grid — erase_display does not move cursor", "[grid][erase]") {
+    terminal_grid g(5, 3);
+    action mv;
+    mv.type = action_type::move_cursor;
+    mv.row = 2; mv.col = 3;
+    g.apply(mv);
+
+    action ed;
+    ed.type = action_type::erase_display;
+    ed.count = 2;
+    g.apply(ed);
+
+    CHECK(g.cursor_row() == 2);
+    CHECK(g.cursor_col() == 3);
+}
+
+// ===========================================================================
+// Task 8 — Erase in Line (EL)
+// ===========================================================================
+
+TEST_CASE("Grid — erase_line mode 0 clears from cursor to end of line", "[grid][erase]") {
+    terminal_grid g(5, 3);
+    // Fill row 1 with 'X'.
+    for (uint32_t c = 0; c < 5; ++c) {
+        action mv;
+        mv.type = action_type::move_cursor;
+        mv.row = 1; mv.col = c;
+        g.apply(mv);
+        g.write_char(U'X');
+    }
+    // Cursor at (1, 2).
+    action mv;
+    mv.type = action_type::move_cursor;
+    mv.row = 1; mv.col = 2;
+    g.apply(mv);
+
+    action el;
+    el.type = action_type::erase_line;
+    el.count = 0;
+    g.apply(el);
+
+    // Columns 0-1 unchanged.
+    CHECK(g.cell(1, 0).codepoint == U'X');
+    CHECK(g.cell(1, 1).codepoint == U'X');
+    // Columns 2-4 erased.
+    CHECK(g.cell(1, 2).codepoint == U' ');
+    CHECK(g.cell(1, 3).codepoint == U' ');
+    CHECK(g.cell(1, 4).codepoint == U' ');
+
+    // Other rows untouched.
+    CHECK(g.cell(0, 0).codepoint == U' ');
+    CHECK(g.cell(2, 0).codepoint == U' ');
+}
+
+TEST_CASE("Grid — erase_line mode 1 clears from beginning to cursor", "[grid][erase]") {
+    terminal_grid g(5, 3);
+    for (uint32_t c = 0; c < 5; ++c) {
+        action mv;
+        mv.type = action_type::move_cursor;
+        mv.row = 1; mv.col = c;
+        g.apply(mv);
+        g.write_char(U'X');
+    }
+    action mv;
+    mv.type = action_type::move_cursor;
+    mv.row = 1; mv.col = 2;
+    g.apply(mv);
+
+    action el;
+    el.type = action_type::erase_line;
+    el.count = 1;
+    g.apply(el);
+
+    CHECK(g.cell(1, 0).codepoint == U' ');
+    CHECK(g.cell(1, 1).codepoint == U' ');
+    CHECK(g.cell(1, 2).codepoint == U' ');
+    CHECK(g.cell(1, 3).codepoint == U'X');
+    CHECK(g.cell(1, 4).codepoint == U'X');
+}
+
+TEST_CASE("Grid — erase_line mode 2 clears entire line", "[grid][erase]") {
+    terminal_grid g(5, 3);
+    // Fill row 1 with 'X' using write_bytes (explicit positioning avoids
+    // auto-wrap moving the cursor off the row).
+    g.write_bytes("\x1B[2;1H");  // CUP to row 2, col 1 (0-based: 1, 0)
+    g.write_bytes("XXXXX");
+    // Cursor is now at (1,5) → auto-wrapped to (2,0). Move back to row 1.
+    action mv;
+    mv.type = action_type::move_cursor;
+    mv.row = 1; mv.col = 2;
+    g.apply(mv);
+
+    action el;
+    el.type = action_type::erase_line;
+    el.count = 2;
+    g.apply(el);
+
+    for (uint32_t c = 0; c < 5; ++c)
+        CHECK(g.cell(1, c).codepoint == U' ');
+
+    // Other rows untouched.
+    CHECK(g.cell(0, 0).codepoint == U' ');
+    CHECK(g.cell(2, 0).codepoint == U' ');
+}
+
+TEST_CASE("Grid — erase_line does not move cursor", "[grid][erase]") {
+    terminal_grid g(5, 3);
+    action mv;
+    mv.type = action_type::move_cursor;
+    mv.row = 1; mv.col = 3;
+    g.apply(mv);
+
+    action el;
+    el.type = action_type::erase_line;
+    el.count = 2;
+    g.apply(el);
+
+    CHECK(g.cursor_row() == 1);
+    CHECK(g.cursor_col() == 3);
+}
+
+// ===========================================================================
+// Task 8 — Erase edge cases
+// ===========================================================================
+
+TEST_CASE("Grid — erase_display on zero-size grid does not crash", "[grid][erase][edge]") {
+    terminal_grid g(0, 0);
+    action ed;
+    ed.type = action_type::erase_display;
+    ed.count = 2;
+    g.apply(ed);
+    SUCCEED("erase_display on zero-size grid did not crash");
+}
+
+TEST_CASE("Grid — erase_line on zero-size grid does not crash", "[grid][erase][edge]") {
+    terminal_grid g(0, 0);
+    action el;
+    el.type = action_type::erase_line;
+    el.count = 2;
+    g.apply(el);
+    SUCCEED("erase_line on zero-size grid did not crash");
+}
+
+TEST_CASE("Grid — erase_display mode 3 treated as mode 2", "[grid][erase]") {
+    terminal_grid g(3, 2);
+    // Fill with 'X' using CUP.
+    g.write_bytes("\x1B[1;1HXXX");
+    g.write_bytes("\x1B[2;1HXXX");
+
+    action ed;
+    ed.type = action_type::erase_display;
+    ed.count = 3;
+    g.apply(ed);
+
+    for (uint32_t r = 0; r < 2; ++r)
+        for (uint32_t c = 0; c < 3; ++c)
+            CHECK(g.cell(r, c).codepoint == U' ');
+}
+
+TEST_CASE("Grid — erase uses default colours", "[grid][erase]") {
+    terminal_grid g(5, 3);
+    // Set a cell with non-default colours via SGR, then erase.
+    g.write_bytes("\x1B[31m");  // SGR red fg
+    g.write_char(U'Y');           // at (0,0) with red fg
+
+    // Move back to (0,0) and erase the line.
+    action mv;
+    mv.type = action_type::move_cursor;
+    mv.row = 0; mv.col = 0;
+    g.apply(mv);
+
+    action el;
+    el.type = action_type::erase_line;
+    el.count = 2;
+    g.apply(el);
+
+    // Erased cell should have default fg, default bg.
+    auto const& cell = g.cell(0, 0);
+    CHECK(cell.codepoint == U' ');
+    CHECK(cell.fg.flags == 1);  // is_default flag set
+    CHECK(cell.bg.flags == 1);
+}
+
+TEST_CASE("Grid — erase_display via write_bytes (integration)", "[grid][erase][integration]") {
+    terminal_grid g(5, 3);
+    // Fill with 'X' using CUP.
+    g.write_bytes("\x1B[1;1HXXXXX");
+    g.write_bytes("\x1B[2;1HXXXXX");
+    g.write_bytes("\x1B[3;1HXXXX");   // 4 X's to avoid scroll
+    // Move to (1, 2) and erase from cursor to end via escape sequence.
+    g.write_bytes("\x1B[2;3H");   // CUP to row 2, col 3 (0-based: 1, 2)
+    g.write_bytes("\x1B[0J");     // ED mode 0
+
+    CHECK(g.cell(0, 0).codepoint == U'X');
+    CHECK(g.cell(1, 2).codepoint == U' ');
+    CHECK(g.cell(2, 4).codepoint == U' ');
+}

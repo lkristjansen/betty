@@ -385,3 +385,114 @@ TEST_CASE("CSI intermediate — multiple intermediate bytes", "[csi][intermediat
     CHECK(v[0].row == 0);
     CHECK(v[0].col == 0);
 }
+
+// ===========================================================================
+// Task 8 — ED: Erase in Display (CSI Ps J)
+// ===========================================================================
+
+TEST_CASE("CSI ED — no param defaults to mode 0", "[csi][ed]") {
+    auto const v = parse_sequence("\x1B[J");
+    REQUIRE(v.size() == 1);
+    CHECK(v[0].type == action_type::erase_display);
+    CHECK(v[0].count == 0);
+}
+
+TEST_CASE("CSI ED — mode 0 (erase to end)", "[csi][ed]") {
+    auto const v = parse_sequence("\x1B[0J");
+    REQUIRE(v.size() == 1);
+    CHECK(v[0].type == action_type::erase_display);
+    CHECK(v[0].count == 0);
+}
+
+TEST_CASE("CSI ED — mode 1 (erase from beginning)", "[csi][ed]") {
+    auto const v = parse_sequence("\x1B[1J");
+    REQUIRE(v.size() == 1);
+    CHECK(v[0].type == action_type::erase_display);
+    CHECK(v[0].count == 1);
+}
+
+TEST_CASE("CSI ED — mode 2 (erase entire display)", "[csi][ed]") {
+    auto const v = parse_sequence("\x1B[2J");
+    REQUIRE(v.size() == 1);
+    CHECK(v[0].type == action_type::erase_display);
+    CHECK(v[0].count == 2);
+}
+
+TEST_CASE("CSI ED — mode 3 (erase display + scrollback)", "[csi][ed]") {
+    auto const v = parse_sequence("\x1B[3J");
+    REQUIRE(v.size() == 1);
+    CHECK(v[0].type == action_type::erase_display);
+    CHECK(v[0].count == 3);
+}
+
+TEST_CASE("CSI ED — missing first param defaults to 0", "[csi][ed]") {
+    auto const v = parse_sequence("\x1B[;J");
+    REQUIRE(v.size() == 1);
+    CHECK(v[0].type == action_type::erase_display);
+    CHECK(v[0].count == 0);
+}
+
+// ===========================================================================
+// Task 8 — EL: Erase in Line (CSI Ps K)
+// ===========================================================================
+
+TEST_CASE("CSI EL — no param defaults to mode 0", "[csi][el]") {
+    auto const v = parse_sequence("\x1B[K");
+    REQUIRE(v.size() == 1);
+    CHECK(v[0].type == action_type::erase_line);
+    CHECK(v[0].count == 0);
+}
+
+TEST_CASE("CSI EL — mode 0 (erase to end of line)", "[csi][el]") {
+    auto const v = parse_sequence("\x1B[0K");
+    REQUIRE(v.size() == 1);
+    CHECK(v[0].type == action_type::erase_line);
+    CHECK(v[0].count == 0);
+}
+
+TEST_CASE("CSI EL — mode 1 (erase from beginning of line)", "[csi][el]") {
+    auto const v = parse_sequence("\x1B[1K");
+    REQUIRE(v.size() == 1);
+    CHECK(v[0].type == action_type::erase_line);
+    CHECK(v[0].count == 1);
+}
+
+TEST_CASE("CSI EL — mode 2 (erase entire line)", "[csi][el]") {
+    auto const v = parse_sequence("\x1B[2K");
+    REQUIRE(v.size() == 1);
+    CHECK(v[0].type == action_type::erase_line);
+    CHECK(v[0].count == 2);
+}
+
+TEST_CASE("CSI EL — missing first param defaults to 0", "[csi][el]") {
+    auto const v = parse_sequence("\x1B[;K");
+    REQUIRE(v.size() == 1);
+    CHECK(v[0].type == action_type::erase_line);
+    CHECK(v[0].count == 0);
+}
+
+// ===========================================================================
+// Task 8 — ED/EL integration: parser recovers after erase
+// ===========================================================================
+
+TEST_CASE("CSI ED/EL — parser returns to ground after erase", "[csi][ed][el]") {
+    vt_parser p;
+    parse_sequence(p, "\x1B[2J");
+    auto const v = p.parse('A');
+    REQUIRE(v.size() == 1);
+    CHECK(v[0].type == action_type::write_char);
+}
+
+TEST_CASE("CSI ED — with intermediate byte", "[csi][ed]") {
+    auto const v = parse_sequence("\x1B[?J");
+    REQUIRE(v.size() == 1);
+    CHECK(v[0].type == action_type::erase_display);
+    CHECK(v[0].count == 0);
+}
+
+TEST_CASE("CSI EL — with intermediate byte", "[csi][el]") {
+    auto const v = parse_sequence("\x1B[?K");
+    REQUIRE(v.size() == 1);
+    CHECK(v[0].type == action_type::erase_line);
+    CHECK(v[0].count == 0);
+}

@@ -150,6 +150,28 @@ auto vt_parser::dispatch(char const final_byte) -> std::vector<action> {
     return actions;
   }
 
+  // ── ED: Erase in Display ────────────────────────────────────────────
+  if (final_byte == 'J') {
+    // Default mode is 0 (unlike cursor moves which default to 1).
+    // split_params treats empty tokens as 0, which is correct for ED.
+    auto const params = split_params(param_buffer_);
+    uint32_t const mode = params[0];
+    action a{};
+    a.type  = action_type::erase_display;
+    a.count = mode;
+    return {a};
+  }
+
+  // ── EL: Erase in Line ───────────────────────────────────────────────
+  if (final_byte == 'K') {
+    auto const params = split_params(param_buffer_);
+    uint32_t const mode = params[0];
+    action a{};
+    a.type  = action_type::erase_line;
+    a.count = mode;
+    return {a};
+  }
+
   // ── Cursor movement (existing) ───────────────────────────────────────
   auto const [p1, p2] = parse_params();
 

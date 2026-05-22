@@ -84,6 +84,17 @@ private:
   // Current SGR state — applied to each cell on write_char.
   rgb_color current_fg_ = default_fg();
   rgb_color current_bg_ = default_bg();
+
+  // --- Erase helpers (Task 8) ----------------------------------------------
+
+  // Erase a contiguous range of cells [start_idx, end_idx] inclusive.
+  void erase_cell_range(size_t start_idx, size_t end_idx);
+
+  // ED — Erase in Display (CSI Ps J).
+  void erase_display(uint32_t mode);
+
+  // EL — Erase in Line (CSI Ps K).
+  void erase_line(uint32_t mode);
 };
 
 } // namespace betty::terminal

@@ -94,6 +94,12 @@ void terminal_grid::apply(action const& a) {
   case action_type::sgr_set_bg:
     current_bg_ = a.color;
     break;
+  case action_type::erase_display:
+    erase_display(a.count);
+    break;
+  case action_type::erase_line:
+    erase_line(a.count);
+    break;
   }
 }
 
@@ -117,6 +123,69 @@ void terminal_grid::newline() {
 
 void terminal_grid::carriage_return() {
   cursor_col_ = 0;
+}
+
+// ===========================================================================
+// erase helpers (Task 8)
+// ===========================================================================
+
+void terminal_grid::erase_cell_range(size_t start_idx, size_t end_idx) {
+  assert(end_idx >= start_idx);
+  assert(end_idx < cells_.size());
+  for (size_t i = start_idx; i <= end_idx; ++i) {
+    cells_[i] = grid_cell{};  // space, default fg, default bg
+  }
+}
+
+void terminal_grid::erase_display(uint32_t mode) {
+  if (cols_ == 0 || rows_ == 0) return;
+
+  size_t const total = static_cast<size_t>(cols_) * rows_;
+  if (total == 0) return;
+
+  size_t const cursor_idx =
+      static_cast<size_t>(cursor_row_) * cols_ + cursor_col_;
+
+  switch (mode) {
+  case 0: // Erase from cursor to end of display (inclusive).
+    erase_cell_range(cursor_idx, total - 1);
+    break;
+  case 1: // Erase from beginning of display to cursor (inclusive).
+    erase_cell_range(0, cursor_idx);
+    break;
+  case 2: // Erase entire display.
+  case 3: // Erase entire display + scrollback (Task 11 adds scrollback).
+    erase_cell_range(0, total - 1);
+    break;
+  default:
+    // Unknown mode — treat as 0 (safe default).
+    erase_cell_range(cursor_idx, total - 1);
+    break;
+  }
+}
+
+void terminal_grid::erase_line(uint32_t mode) {
+  if (cols_ == 0 || rows_ == 0) return;
+
+  size_t const row_start = static_cast<size_t>(cursor_row_) * cols_;
+  size_t const row_end   = row_start + cols_ - 1;
+  size_t const cursor_idx = row_start + cursor_col_;
+
+  switch (mode) {
+  case 0: // Erase from cursor to end of line (inclusive).
+    erase_cell_range(cursor_idx, row_end);
+    break;
+  case 1: // Erase from beginning of line to cursor (inclusive).
+    erase_cell_range(row_start, cursor_idx);
+    break;
+  case 2: // Erase entire line.
+    erase_cell_range(row_start, row_end);
+    break;
+  default:
+    // Unknown mode — treat as 0 (safe default).
+    erase_cell_range(cursor_idx, row_end);
+    break;
+  }
 }
 
 // ===========================================================================

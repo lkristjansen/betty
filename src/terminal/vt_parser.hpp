@@ -82,6 +82,8 @@ enum class action_type : uint8_t {
   sgr_reset,          // reset fg/bg to defaults (SGR 0)
   sgr_set_fg,         // set foreground colour
   sgr_set_bg,         // set background colour
+  erase_display,      // ED: clear cells in display (mode in action::count)
+  erase_line,         // EL: clear cells in current line (mode in action::count)
 };
 
 // ===========================================================================
