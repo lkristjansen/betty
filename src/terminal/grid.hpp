@@ -4,6 +4,8 @@
 #include <string_view>
 #include <vector>
 
+#include "vt_parser.hpp"
+
 namespace betty::terminal {
 
 // ===========================================================================
@@ -43,8 +45,11 @@ public:
   void write_char(char32_t cp);
 
   // Process a sequence of raw bytes (VT-stripped shell output).
-  // Handles \\r, \\n, and printable ASCII.  Ignores other control chars.
+  // Internally feeds bytes through vt_parser and applies resulting actions.
   void write_bytes(std::string_view data);
+
+  // Apply a single parsed action to the grid.
+  void apply(action const& a);
 
   // --- Explicit cursor control ----------------------------------------------
 
@@ -77,6 +82,7 @@ private:
   uint32_t cursor_col_ = 0;
   uint32_t cursor_row_ = 0;
   std::vector<grid_cell> cells_;  // size = cols_ * rows_, row-major
+  vt_parser parser_;
 };
 
 } // namespace betty::terminal

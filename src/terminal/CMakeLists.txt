@@ -1,6 +1,7 @@
 add_library(terminal STATIC
     grid.cpp
     input_handler.cpp
+    vt_parser.cpp
 )
 
 target_include_directories(terminal PUBLIC ${CMAKE_CURRENT_SOURCE_DIR})

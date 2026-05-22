@@ -39,25 +39,49 @@ void terminal_grid::write_char(char32_t cp) {
 }
 
 // ===========================================================================
-// write_bytes
+// write_bytes — feed bytes to VT parser, apply resulting actions
 // ===========================================================================
 
 void terminal_grid::write_bytes(std::string_view data) {
   for (unsigned char const b : data) {
-    switch (b) {
-    case '\r':
-      carriage_return();
-      break;
-    case '\n':
-      newline();
-      break;
-    default:
-      if (b >= 0x20) {
-        write_char(static_cast<char32_t>(b));
-      }
-      // Other C0 controls and high bytes (>= 0x80) are silently ignored.
-      break;
+    auto a = parser_.parse(b);
+    if (a) {
+      apply(*a);
     }
+  }
+}
+
+// ===========================================================================
+// apply — dispatch a single action to the grid
+// ===========================================================================
+
+void terminal_grid::apply(action const& a) {
+  switch (a.type) {
+  case action_type::write_char:
+    write_char(a.codepoint);
+    break;
+  case action_type::carriage_return:
+    carriage_return();
+    break;
+  case action_type::newline:
+    newline();
+    break;
+  case action_type::move_cursor:
+    cursor_row_ = std::min(a.row, rows_ > 0 ? rows_ - 1 : 0);
+    cursor_col_ = std::min(a.col, cols_ > 0 ? cols_ - 1 : 0);
+    break;
+  case action_type::move_cursor_up:
+    cursor_row_ = (cursor_row_ > a.count) ? cursor_row_ - a.count : 0;
+    break;
+  case action_type::move_cursor_down:
+    cursor_row_ = std::min(cursor_row_ + a.count, rows_ > 0 ? rows_ - 1 : 0);
+    break;
+  case action_type::move_cursor_forward:
+    cursor_col_ = std::min(cursor_col_ + a.count, cols_ > 0 ? cols_ - 1 : 0);
+    break;
+  case action_type::move_cursor_back:
+    cursor_col_ = (cursor_col_ > a.count) ? cursor_col_ - a.count : 0;
+    break;
   }
 }
 
