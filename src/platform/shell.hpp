@@ -70,9 +70,9 @@ private:
 // Check whether the shell process is still running.
 [[nodiscard]] auto is_shell_running(shell const& sh) -> bool;
 
-// Read raw VT-stripped output from the shell.
-// Returns a string of bytes. \r and \n are preserved, escape sequences are removed.
-// Empty string means no data ready.
+// Read raw output from the shell.
+// Returns a string of bytes as produced by ConPTY (including VT/ANSI escape
+// sequences).  Empty string means no data ready.
 [[nodiscard]] auto read_shell_output_raw(shell& sh) -> std::string;
 
 // Send input bytes to the shell's input pipe.

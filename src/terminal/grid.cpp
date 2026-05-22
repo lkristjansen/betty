@@ -226,6 +226,39 @@ auto terminal_grid::cells() const noexcept -> std::span<const grid_cell> {
 }
 
 // ===========================================================================
+// render_cells — produce resolved render_cell buffer for the platform renderer
+// ===========================================================================
+
+auto terminal_grid::render_cells() -> std::span<const platform::render_cell> {
+  size_t const n = cells_.size();
+  // Lazy cache: rebuild every call, reuse capacity.
+  render_cache_.resize(n);
+
+  for (size_t i = 0; i < n; ++i) {
+    auto const& src = cells_[i];
+    auto& dst = render_cache_[i];
+
+    dst.codepoint = src.codepoint;
+
+    // Resolve foreground: if flagged as default, substitute the actual default colour.
+    if (src.fg.flags & 1) {
+      dst.fg = {k_default_fg_color.r, k_default_fg_color.g, k_default_fg_color.b};
+    } else {
+      dst.fg = {src.fg.r, src.fg.g, src.fg.b};
+    }
+
+    // Resolve background: if flagged as default, substitute the actual default colour.
+    if (src.bg.flags & 1) {
+      dst.bg = {k_default_bg_color.r, k_default_bg_color.g, k_default_bg_color.b};
+    } else {
+      dst.bg = {src.bg.r, src.bg.g, src.bg.b};
+    }
+  }
+
+  return render_cache_;
+}
+
+// ===========================================================================
 // resize (placeholder for Task 10)
 // ===========================================================================
 

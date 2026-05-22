@@ -156,10 +156,11 @@ int main() {
     }
 
     // Render the grid
-    auto const cells = grid.cells();
+    auto const cells = grid.render_cells();
     if (!cells.empty()) {
-      if (auto draw_result = renderer.draw_grid(device, rtv, cells, grid.cols(), grid.rows(),
-                                                  grid.cursor_row(), grid.cursor_col());
+      platform::size2d const dims{grid.cols(), grid.rows()};
+      platform::point2d const cursor{grid.cursor_row(), grid.cursor_col()};
+      if (auto draw_result = renderer.draw_grid(device, rtv, cells, dims, cursor);
           !draw_result) {
         log_error(draw_result.error(), "draw grid");
         exit_code = 1;

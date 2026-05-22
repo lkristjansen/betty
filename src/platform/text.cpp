@@ -2,7 +2,6 @@
 #include "gfx.hpp"
 #include "gfx_impl.hpp"
 #include "error.hpp"
-#include "terminal/grid.hpp"
 #define WIN32_LEAN_AND_MEAN
 #define NOMINMAX
 #include <d3d11.h>
@@ -27,7 +26,7 @@ namespace betty::platform {
 // ===========================================================================
 
 inline constexpr uint32_t k_font_size_px        = 18u;   // raster font size used everywhere
-inline constexpr uint32_t k_max_glyphs_per_frame = 8192u;  // enough for large terminal output
+inline constexpr uint32_t k_max_glyphs_per_frame = 65536u; // safe for any reasonable terminal size
 inline constexpr uint32_t k_vertices_per_quad    = 4u;
 inline constexpr uint32_t k_indices_per_quad     = 6u;
 inline constexpr uint32_t k_max_vertices = k_max_glyphs_per_frame * k_vertices_per_quad;
@@ -867,9 +866,8 @@ auto glyph_renderer::draw_text(d3d_device const& device,
 
 auto glyph_renderer::draw_grid(d3d_device const& device,
                                 d3d_render_target_view const& rtv,
-                                std::span<const terminal::grid_cell> cells,
-                                uint32_t cols, uint32_t rows,
-                                uint32_t cursor_row, uint32_t cursor_col) const
+                                std::span<const render_cell> cells,
+                                size2d dims, point2d cursor) const
   -> std::expected<void, std::error_code> {
 
   auto* context = device.impl_->context.Get();
@@ -877,8 +875,8 @@ auto glyph_renderer::draw_grid(d3d_device const& device,
   // Clamp to the actual window dimensions.
   uint32_t const max_cols = impl_->window_width / impl_->cell_width;
   uint32_t const max_rows = impl_->window_height / impl_->cell_height;
-  uint32_t const draw_cols = std::min(cols, max_cols);
-  uint32_t const draw_rows = std::min(rows, max_rows);
+  uint32_t const draw_cols = std::min(dims.width, max_cols);
+  uint32_t const draw_rows = std::min(dims.height, max_rows);
 
   // --- 1. Map vertex buffer ------------------------------------------------
   D3D11_MAPPED_SUBRESOURCE mapped{};
@@ -904,26 +902,16 @@ auto glyph_renderer::draw_grid(d3d_device const& device,
     ++quad_count;
   };
 
-  auto resolve_fg = [](terminal::rgb_color c) -> terminal::rgb_color {
-    if (c.flags & 1) return terminal::k_default_fg_color;
-    return c;
-  };
-
-  auto resolve_bg = [](terminal::rgb_color c) -> terminal::rgb_color {
-    if (c.flags & 1) return terminal::k_default_bg_color;
-    return c;
-  };
-
   // Only draw the cursor if it lies within the visible area.
   bool const cursor_visible =
-      cursor_row < draw_rows && cursor_col < draw_cols;
+      cursor.row < draw_rows && cursor.col < draw_cols;
 
   for (uint32_t row = 0; row < draw_rows; ++row) {
     float const y0 = static_cast<float>(row * impl_->cell_height);
     float const y1 = y0 + static_cast<float>(impl_->cell_height);
 
     for (uint32_t col = 0; col < draw_cols && quad_count < k_max_glyphs_per_frame; ++col) {
-      size_t const idx = static_cast<size_t>(row) * cols + col;
+      size_t const idx = static_cast<size_t>(row) * dims.width + col;
       if (idx >= cells.size()) continue;
 
       auto const& cell = cells[idx];
@@ -932,17 +920,13 @@ auto glyph_renderer::draw_grid(d3d_device const& device,
       float const x1 = x0 + static_cast<float>(impl_->cell_width);
 
       bool const is_cursor =
-        cursor_visible && row == cursor_row && col == cursor_col;
+        cursor_visible && row == cursor.row && col == cursor.col;
 
       if (is_cursor) {
         // Reverse video: bg quad in fg colour, glyph in bg colour.
-        auto const fg = resolve_fg(cell.fg);
-        auto const bg = resolve_bg(cell.bg);
-
-        // Always draw the block — fg colour fills the cell.
-        float const nr = static_cast<float>(fg.r) / 255.0f;
-        float const ng = static_cast<float>(fg.g) / 255.0f;
-        float const nb = static_cast<float>(fg.b) / 255.0f;
+        float const nr = static_cast<float>(cell.fg.r) / 255.0f;
+        float const ng = static_cast<float>(cell.fg.g) / 255.0f;
+        float const nb = static_cast<float>(cell.fg.b) / 255.0f;
         emit_quad(x0, y0, x1, y1, -1.0f, 0.0f, -1.0f, 0.0f, nr, ng, nb);
 
         // If the cell has a character, draw it in the bg colour.
@@ -952,19 +936,18 @@ auto glyph_renderer::draw_grid(d3d_device const& device,
             (cp <= 127) ? static_cast<unsigned char>(cp)
                           : static_cast<unsigned char>('?');
           auto& slot = impl_->glyph_slots[glyph];
-          float const cr = static_cast<float>(bg.r) / 255.0f;
-          float const cg = static_cast<float>(bg.g) / 255.0f;
-          float const cb = static_cast<float>(bg.b) / 255.0f;
+          float const cr = static_cast<float>(cell.bg.r) / 255.0f;
+          float const cg = static_cast<float>(cell.bg.g) / 255.0f;
+          float const cb = static_cast<float>(cell.bg.b) / 255.0f;
           emit_quad(x0, y0, x1, y1, slot.u0, slot.v0, slot.u1, slot.v1,
                      cr, cg, cb);
         }
       } else {
-        // Background quad — only if the cell has an explicit (non-default) bg.
-        if (!(cell.bg.flags & 1)) {
-          auto const& bg = cell.bg;
-          float const nr = static_cast<float>(bg.r) / 255.0f;
-          float const ng = static_cast<float>(bg.g) / 255.0f;
-          float const nb = static_cast<float>(bg.b) / 255.0f;
+        // Background quad — always emitted.
+        {
+          float const nr = static_cast<float>(cell.bg.r) / 255.0f;
+          float const ng = static_cast<float>(cell.bg.g) / 255.0f;
+          float const nb = static_cast<float>(cell.bg.b) / 255.0f;
           // Negative u signals the pixel shader to skip atlas sampling.
           emit_quad(x0, y0, x1, y1, -1.0f, 0.0f, -1.0f, 0.0f, nr, ng, nb);
         }
@@ -977,10 +960,9 @@ auto glyph_renderer::draw_grid(d3d_device const& device,
                           : static_cast<unsigned char>('?');
 
           auto& slot = impl_->glyph_slots[glyph];
-          auto const fg = resolve_fg(cell.fg);
-          float const nr = static_cast<float>(fg.r) / 255.0f;
-          float const ng = static_cast<float>(fg.g) / 255.0f;
-          float const nb = static_cast<float>(fg.b) / 255.0f;
+          float const nr = static_cast<float>(cell.fg.r) / 255.0f;
+          float const ng = static_cast<float>(cell.fg.g) / 255.0f;
+          float const nb = static_cast<float>(cell.fg.b) / 255.0f;
 
           emit_quad(x0, y0, x1, y1, slot.u0, slot.v0, slot.u1, slot.v1,
                      nr, ng, nb);

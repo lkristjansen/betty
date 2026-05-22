@@ -38,19 +38,17 @@ struct glyph_renderer {
                                 std::span<std::string_view const> lines,
                                 uint32_t start_row) const -> std::expected<void, std::error_code>;
 
-  // Draw a terminal grid. `cells` is a row-major flat array of `rows × cols`
-  // grid_cell structs (from terminal/grid.hpp). Each cell carries a codepoint
-  // and fg/bg colours. Background quads are drawn for non-default backgrounds;
-  // glyph quads are drawn with the cell's foreground colour.
+  // Draw a terminal grid. `cells` is a row-major flat array of `dims.height`
+  // rows × `dims.width` cols. Each render_cell carries a resolved codepoint
+  // and fg/bg colours. Background quads are always emitted.
   // Non-ASCII codepoints (> 127) are rendered as '?'.
   //
-  // cursor_row / cursor_col specify which cell to render with reverse video
+  // `cursor` specifies which cell to render with reverse video
   // (foreground/background swapped).  Pass values outside the visible area to
   // suppress the cursor (it will not be drawn).
   [[nodiscard]] auto draw_grid(d3d_device const& device, d3d_render_target_view const& rtv,
-                                std::span<const terminal::grid_cell> cells,
-                                uint32_t cols, uint32_t rows,
-                                uint32_t cursor_row, uint32_t cursor_col) const
+                                std::span<const render_cell> cells,
+                                size2d dims, point2d cursor) const
       -> std::expected<void, std::error_code>;
 
   ~glyph_renderer();

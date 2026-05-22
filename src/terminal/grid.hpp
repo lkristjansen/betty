@@ -4,6 +4,7 @@
 #include <string_view>
 #include <vector>
 
+#include "platform/types.hpp"
 #include "vt_parser.hpp"
 
 namespace betty::terminal {
@@ -69,6 +70,12 @@ public:
   [[nodiscard]] auto cell(uint32_t row, uint32_t col) const -> grid_cell const&;
   [[nodiscard]] auto cells() const noexcept -> std::span<const grid_cell>;
 
+  // Produce a flat row-major buffer of resolved render_cell structs.
+  // Default fg/bg colours are resolved to actual RGB values internally.
+  // The returned span references a stable internal cache that is rebuilt on
+  // each call; capacity is reused across calls to avoid repeated allocations.
+  [[nodiscard]] auto render_cells() -> std::span<const platform::render_cell>;
+
   // --- Resize (placeholder for Task 10) -------------------------------------
 
   void resize(uint32_t new_cols, uint32_t new_rows);
@@ -80,6 +87,9 @@ private:
   uint32_t cursor_row_ = 0;
   std::vector<grid_cell> cells_;  // size = cols_ * rows_, row-major
   vt_parser parser_;
+
+  // Cache of resolved render_cell values for the platform renderer.
+  mutable std::vector<platform::render_cell> render_cache_;
 
   // Current SGR state — applied to each cell on write_char.
   rgb_color current_fg_ = default_fg();

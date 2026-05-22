@@ -58,6 +58,46 @@ inline constexpr rgba_color rgba_from_rgb(std::uint8_t red, std::uint8_t green, 
 }
 
 // ===========================================================================
+// 8-bit-per-channel RGB colour (no flags, no alpha).
+// Used by render_cell to carry resolved foreground/background colours.
+// ===========================================================================
+
+struct rgb_color {
+  std::uint8_t r = 0;
+  std::uint8_t g = 0;
+  std::uint8_t b = 0;
+};
+
+// ===========================================================================
+// Generic 2D size (cols/rows, width/height).
+// ===========================================================================
+
+struct size2d {
+  std::uint32_t width  = 0;
+  std::uint32_t height = 0;
+};
+
+// ===========================================================================
+// Generic 2D point (row/col, y/x).
+// ===========================================================================
+
+struct point2d {
+  std::uint32_t row = 0;
+  std::uint32_t col = 0;
+};
+
+// ===========================================================================
+// Render cell — a single cell ready for the glyph renderer.
+// Colours are fully resolved (no default-colour sentinel).
+// ===========================================================================
+
+struct render_cell {
+  char32_t codepoint = U' ';
+  rgb_color fg;
+  rgb_color bg;
+};
+
+// ===========================================================================
 // Window client-area dimensions in logical pixels.
 // ===========================================================================
 

@@ -7,8 +7,6 @@ add_library(platform STATIC
 )
 
 target_include_directories(platform PUBLIC ${CMAKE_CURRENT_SOURCE_DIR})
-# Allow platform code to include terminal headers (e.g. terminal/grid.hpp).
-target_include_directories(platform PUBLIC ${CMAKE_CURRENT_SOURCE_DIR}/..)
 target_compile_features(platform PUBLIC cxx_std_23)
 
 if(MSVC)

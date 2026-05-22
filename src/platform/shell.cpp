@@ -53,7 +53,7 @@ struct shell_impl {
 
   std::jthread  read_thread;
   std::mutex    output_mutex;
-  std::string   raw_buffer;         // VT-stripped bytes, \r and \n preserved
+  std::string   raw_buffer;         // Raw ConPTY output (unfiltered)
   std::condition_variable output_cv;
 
   // Destructor handles the hard resource cleanup.
@@ -126,54 +126,6 @@ auto shell::native_handle() const noexcept -> shell_handle {
 
 namespace {
 
-// Strip VT/ANSI escape sequences and control characters from raw ConPTY output.
-// Keeps printable text and newlines (\n).  This is a minimal cleaner so that
-// ConPTY output is readable until a full VT state-machine is implemented.
-auto strip_vt(std::string_view data) -> std::string {
-  std::string out;
-  out.reserve(data.size());
-  size_t i = 0;
-  while (i < data.size()) {
-    auto c = static_cast<unsigned char>(data[i]);
-
-    if (c == 0x1b && i + 1 < data.size()) {
-      // --- CSI  \x1b[  ---
-      if (data[i + 1] == '[') {
-        i += 2;
-        // Skip parameter bytes 0x30–0x3F
-        while (i < data.size() && data[i] >= 0x30 && data[i] <= 0x3F) ++i;
-        // Skip intermediate bytes 0x20–0x2F
-        while (i < data.size() && data[i] >= 0x20 && data[i] <= 0x2F) ++i;
-        // Final byte 0x40–0x7E
-        if (i < data.size() && data[i] >= 0x40 && data[i] <= 0x7E) ++i;
-        continue;
-      }
-      // --- OSC  \x1b]  ---
-      if (data[i + 1] == ']') {
-        i += 2;
-        while (i < data.size() && data[i] != 0x07 && data[i] != 0x1b) ++i;
-        if (i < data.size() && data[i] == 0x07) { ++i; continue; }
-        if (i + 1 < data.size() && data[i] == 0x1b && data[i+1] == '\\') { i += 2; continue; }
-        continue;
-      }
-      // Other two-byte escapes \x1b followed by one byte 0x40–0x5F
-      if (data[i + 1] >= 0x40 && data[i + 1] <= 0x5F) {
-        i += 2; continue;
-      }
-      // Skip bare ESC
-      ++i; continue;
-    }
-
-    // Keep newlines, carriage returns, and printable characters.
-    // Drop other C0 controls.
-    if (c == '\n' || c == '\r' || (c >= 0x20 && c < 0x7F) || c >= 0x80) {
-      out += static_cast<char>(c);
-    }
-    ++i;
-  }
-  return out;
-}
-
 void read_thread_fn(shell_impl* p, std::stop_token stoken) {
   char read_buf[4096];
 
@@ -186,12 +138,9 @@ void read_thread_fn(shell_impl* p, std::stop_token stoken) {
       break;
     }
 
-    // Strip VT/ANSI escape sequences, preserving \r, \n, and printable chars.
-    std::string cleaned = strip_vt({read_buf, bytes_read});
-
     {
       std::lock_guard<std::mutex> lock(p->output_mutex);
-      p->raw_buffer.append(cleaned);
+      p->raw_buffer.append(read_buf, bytes_read);
     }
     p->output_cv.notify_one();
   }
