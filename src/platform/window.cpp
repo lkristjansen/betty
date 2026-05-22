@@ -55,8 +55,8 @@ auto map_vk(WPARAM wParam) -> vk_code {
 }
 
 // Retrieve the callbacks pointer from an HWND.
-auto get_callbacks(HWND hwnd) -> window_callbacks* {
-  auto ptr = reinterpret_cast<window_callbacks*>(
+auto get_callbacks(HWND hwnd) -> detail::window_callbacks* {
+  auto ptr = reinterpret_cast<detail::window_callbacks*>(
     GetWindowLongPtrW(hwnd, GWLP_USERDATA));
   return ptr;
 }
@@ -129,9 +129,13 @@ auto widen(std::string_view sv) -> std::wstring {
 
 // --- win32_window ----------------------------------------------------------
 
+auto win32_window::native_handle() const noexcept -> window_handle {
+  return window_handle{ handle_ };
+}
+
 win32_window::~win32_window() {
-  if (handle_ != nullptr && IsWindow(handle_)) {
-    DestroyWindow(handle_);
+  if (handle_ != nullptr && IsWindow(static_cast<HWND>(handle_))) {
+    DestroyWindow(static_cast<HWND>(handle_));
   }
 }
 
@@ -143,8 +147,8 @@ win32_window::win32_window(win32_window&& other) noexcept
 
 win32_window& win32_window::operator=(win32_window&& other) noexcept {
   if (this != &other) {
-    if (handle_ != nullptr && IsWindow(handle_)) {
-      DestroyWindow(handle_);
+    if (handle_ != nullptr && IsWindow(static_cast<HWND>(handle_))) {
+      DestroyWindow(static_cast<HWND>(handle_));
     }
     handle_ = other.handle_;
     other.handle_ = nullptr;
@@ -160,6 +164,10 @@ auto make_window(window_settings const& settings)
 
   HINSTANCE hInstance = GetModuleHandleW(nullptr);
 
+  // Widen UTF-8 strings to UTF-16 — must outlive the WNDCLASSEXW and CreateWindowExW calls.
+  auto const wide_class_name = widen(settings.class_name);
+  auto const wide_title = widen(settings.title);
+
   // 1. Register window class
   WNDCLASSEXW wc{};
   wc.cbSize = sizeof(WNDCLASSEXW);
@@ -169,7 +177,7 @@ auto make_window(window_settings const& settings)
   wc.hIcon = LoadIconW(nullptr, reinterpret_cast<LPCWSTR>(IDI_APPLICATION));
   wc.hCursor = LoadCursorW(nullptr, reinterpret_cast<LPCWSTR>(IDC_ARROW));
   wc.hbrBackground = nullptr;  // D3D clears the colour
-  wc.lpszClassName = settings.class_name.c_str();
+  wc.lpszClassName = wide_class_name.c_str();
   wc.hIconSm = nullptr;
 
   // If registration fails for a reason other than "class already exists", error out.
@@ -193,8 +201,8 @@ auto make_window(window_settings const& settings)
   // 3. Create window
   HWND hwnd = CreateWindowExW(
     0,                              // dwExStyle
-    settings.class_name.c_str(),    // lpClassName
-    settings.title.c_str(),         // lpWindowName
+    wide_class_name.c_str(),        // lpClassName
+    wide_title.c_str(),             // lpWindowName
     dwStyle,                        // dwStyle
     CW_USEDEFAULT, CW_USEDEFAULT,   // x, y
     windowWidth,                    // nWidth
@@ -214,7 +222,7 @@ auto make_window(window_settings const& settings)
 
   win32_window result{ win32_window::empty_tag{} };
   result.handle_ = hwnd;
-  result.callbacks_ = std::make_unique<window_callbacks>();
+  result.callbacks_ = std::make_unique<detail::window_callbacks>();
 
   // 5. Store the callbacks pointer via GWLP_USERDATA so WndProc can reach it.
   SetWindowLongPtrW(hwnd, GWLP_USERDATA,
@@ -240,7 +248,9 @@ auto dispatch_pending_messages() -> bool {
 // --- show_error_message ----------------------------------------------------
 
 auto show_error_message(std::string_view title, std::string_view message) -> void {
-  MessageBoxW(nullptr, widen(message).c_str(), widen(title).c_str(),
+  auto const wide_title = widen(title);
+  auto const wide_message = widen(message);
+  MessageBoxW(nullptr, wide_message.c_str(), wide_title.c_str(),
               MB_OK | MB_ICONERROR);
 }
 

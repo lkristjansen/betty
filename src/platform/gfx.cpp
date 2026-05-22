@@ -109,7 +109,7 @@ auto make_swap_chain(d3d_device const& device, win32_window const& window,
   ComPtr<IDXGISwapChain1> swap_chain;
   hr = factory->CreateSwapChainForHwnd(
     device.impl_->device.Get(),
-    window.native_handle(),
+    static_cast<HWND>(window.as_hwnd()),
     &desc,
     nullptr,
     nullptr,

@@ -18,11 +18,11 @@ extern "C" void WINAPI ClosePseudoConsole(HPCON hPC);
 #endif
 
 #include <string>
-#include <atomic>
 #include <memory>
 #include <mutex>
 #include <condition_variable>
 #include <thread>
+#include <stop_token>
 #include <string_view>
 
 #include "error.hpp"
@@ -51,29 +51,24 @@ struct shell_impl {
   HANDLE  conpty_input{ nullptr }; // ConPTY read end of input pipe
   HANDLE  conpty_output{ nullptr };// ConPTY write end of output pipe
 
-  std::thread   read_thread;
+  std::jthread  read_thread;
   std::mutex    output_mutex;
   std::string   raw_buffer;         // VT-stripped bytes, \r and \n preserved
   std::condition_variable output_cv;
-
-  std::atomic<bool> running{ true };
 
   // Destructor handles the hard resource cleanup.
   // destroy_shell() should be called first to send "exit" and wait for
   // the child process to terminate gracefully.
   ~shell_impl() {
-    // 1. Tell the read thread to stop polling.
-    running.store(false);
-
-    // 2. Cancel any blocking synchronous I/O the read thread might be
-    //    stuck on (ReadFile on the output pipe).  CancelSynchronousIo
-    //    is the correct API; closing the handle from another thread is
-    //    undefined behaviour for synchronous I/O.
+    // 1. Cancel any blocking synchronous I/O the read thread might be
+    //    stuck on (ReadFile on the output pipe).  This must happen
+    //    BEFORE the jthread destructor runs, otherwise join() blocks
+    //    indefinitely on a still-pending ReadFile.
     if (read_thread.joinable()) {
       CancelSynchronousIo(read_thread.native_handle());
     }
 
-    // 3. Close the ConPTY.  This also closes the write-end of the
+    // 2. Close the ConPTY.  This also closes the write-end of the
     //    output pipe (conpty_output), causing ReadFile to return EOF
     //    as a secondary unblocking mechanism.
     if (hpc) {
@@ -81,24 +76,11 @@ struct shell_impl {
       hpc = nullptr;
     }
 
-    // 4. Wait for the read thread to finish, with a timeout safety net.
-    //    The thread should exit promptly because of steps 2 and 3 above.
-    if (read_thread.joinable()) {
-      HANDLE hThread = read_thread.native_handle();
-      DWORD waitResult = WaitForSingleObject(hThread, 3000);
-      if (waitResult == WAIT_OBJECT_0) {
-        // Thread exited cleanly — join is a no-op that resets the
-        // std::thread object.
-        read_thread.join();
-      } else {
-        // The thread didn't exit even after CancelSynchronousIo and
-        // closing the ConPTY.  Detach it rather than blocking process
-        // shutdown — the OS will reclaim it when the process exits.
-        read_thread.detach();
-      }
-    }
+    // 3. jthread's destructor automatically calls request_stop() then
+    //    join().  The thread will have already exited due to step 1
+    //    (ReadFile was cancelled) so join() returns promptly.
 
-    // 5. Close all remaining handles.
+    // 4. Close all remaining handles.
     safe_close(input_pipe);
     safe_close(output_pipe);
     safe_close(conpty_input);
@@ -112,9 +94,35 @@ struct shell_impl {
 };
 
 // --- shell — rule of five --------------------------------------------------
-shell::~shell() = default;
+shell::~shell() {
+  if (!impl_) return;
+  auto* p = impl_.get();
+
+  // 1. Send exit command to give the shell a chance to terminate gracefully.
+  if (p->input_pipe && p->input_pipe != INVALID_HANDLE_VALUE) {
+    DWORD written = 0;
+    const char exit_cmd[] = "exit\r\n";
+    WriteFile(p->input_pipe, exit_cmd, static_cast<DWORD>(sizeof(exit_cmd) - 1), &written, nullptr);
+  }
+
+  // 2. Wait for process to exit (2 second timeout),
+  //    then forcefully terminate if it didn't.
+  if (p->process && p->process != INVALID_HANDLE_VALUE) {
+    if (WaitForSingleObject(p->process, 2000) != WAIT_OBJECT_0)
+      TerminateProcess(p->process, 1);
+  }
+
+  // 3. impl_ is destroyed here, which invokes shell_impl's destructor.
+  //    The destructor closes the ConPTY (unblocking the read thread),
+  //    joins the jthread, and closes all remaining handles.
+}
 shell::shell(shell&&) noexcept = default;
 shell& shell::operator=(shell&&) noexcept = default;
+shell::shell(empty_tag) noexcept {}
+
+auto shell::native_handle() const noexcept -> shell_handle {
+  return shell_handle{ impl_ ? impl_->process : nullptr };
+}
 
 namespace {
 
@@ -166,15 +174,14 @@ auto strip_vt(std::string_view data) -> std::string {
   return out;
 }
 
-void read_thread_fn(shell_impl* p) {
+void read_thread_fn(shell_impl* p, std::stop_token stoken) {
   char read_buf[4096];
 
-  while (p->running.load()) {
+  while (!stoken.stop_requested()) {
     DWORD bytes_read = 0;
     BOOL ok = ReadFile(p->output_pipe, read_buf, sizeof(read_buf), &bytes_read, nullptr);
 
     if (!ok || bytes_read == 0) {
-      p->running.store(false);
       p->output_cv.notify_one();
       break;
     }
@@ -199,7 +206,7 @@ void read_thread_fn(shell_impl* p) {
 // terminal: ANSI colours, cursor state, screen dimensions, etc.
 
 auto make_shell(shell_settings const& settings)
-  -> std::expected<std::unique_ptr<shell>, std::error_code> {
+  -> std::expected<shell, std::error_code> {
   // Validate dimensions — default to 120x40 if zero.
   uint32_t const cols = settings.cols ? settings.cols : 120;
   uint32_t const rows = settings.rows ? settings.rows : 40;
@@ -282,6 +289,9 @@ auto make_shell(shell_settings const& settings)
   }
 
   // 6. Spawn PowerShell.
+  // cmd_line is a non-const std::wstring, so .data() returns wchar_t* (not
+  // const wchar_t*).  CreateProcessW may modify the command-line buffer in
+  // place, so we need a mutable string — this is correct and standards-conformant.
   std::wstring cmd_line = L"powershell.exe -NoProfile -NoLogo";
   PROCESS_INFORMATION pi{};
   BOOL created = CreateProcessW(
@@ -312,43 +322,13 @@ auto make_shell(shell_settings const& settings)
   impl_ptr->output_pipe  = hOutRead;   // parent read end
   impl_ptr->conpty_input = hInRead;    // ConPTY read end
   impl_ptr->conpty_output= hOutWrite; // ConPTY write end
-  impl_ptr->read_thread  = std::thread(read_thread_fn, impl_ptr.get());
+  impl_ptr->read_thread  = std::jthread(
+    [p = impl_ptr.get()](std::stop_token stoken) { read_thread_fn(p, stoken); }
+  );
 
-  auto sh = std::make_unique<shell>();
-  sh->impl_ = std::move(impl_ptr);
-  return sh;
-}
-
-// ===========================================================================
-// destroy_shell
-// ===========================================================================
-// Send "exit" to the shell and give it a chance to shut down gracefully.
-// After this returns, the caller should let the shell unique_ptr go out
-// of scope — shell_impl's destructor handles the heavy cleanup (closing
-// the ConPTY to unblock the read thread, joining the thread, and closing
-// all handles).
-
-auto destroy_shell(std::unique_ptr<shell> sh) -> void {
-  if (!sh || !sh->impl_) return;
-  auto* p = sh->impl_.get();
-
-  // 1. Send exit command to give the shell a chance to terminate gracefully.
-  if (p->input_pipe && p->input_pipe != INVALID_HANDLE_VALUE) {
-    DWORD written = 0;
-    const char exit_cmd[] = "exit\r\n";
-    WriteFile(p->input_pipe, exit_cmd, static_cast<DWORD>(sizeof(exit_cmd) - 1), &written, nullptr);
-  }
-
-  // 2. Wait for process to exit (2 second timeout),
-  //    then forcefully terminate if it didn't.
-  if (p->process && p->process != INVALID_HANDLE_VALUE) {
-    if (WaitForSingleObject(p->process, 2000) != WAIT_OBJECT_0)
-      TerminateProcess(p->process, 1);
-  }
-
-  // The caller will now destroy `sh` (end of scope), which invokes
-  // shell_impl's destructor.  The destructor closes the ConPTY first
-  // (unblocking the read thread), joins the thread, and closes all handles.
+  shell result{ shell::empty_tag{} };
+  result.impl_ = std::move(impl_ptr);
+  return result;
 }
 
 // ===========================================================================
@@ -356,8 +336,12 @@ auto destroy_shell(std::unique_ptr<shell> sh) -> void {
 // ===========================================================================
 
 auto is_shell_running(shell const& sh) -> bool {
-  if (!sh.impl_) return false;
-  return sh.impl_->running.load();
+  if (!sh.impl_ || !sh.impl_->process || sh.impl_->process == INVALID_HANDLE_VALUE) {
+    return false;
+  }
+  // Poll the process handle directly — more accurate than a flag that
+  // the read thread can set to false for unrelated I/O errors.
+  return WaitForSingleObject(sh.impl_->process, 0) != WAIT_OBJECT_0;
 }
 
 // ===========================================================================

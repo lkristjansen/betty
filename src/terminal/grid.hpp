@@ -63,6 +63,10 @@ public:
   [[nodiscard]] auto cell(uint32_t row, uint32_t col) const -> grid_cell const&;
   [[nodiscard]] auto cells() const noexcept -> std::span<const grid_cell>;
 
+  // View the grid as a contiguous array of codepoints.
+  // Safe because grid_cell is a single char32_t at offset 0.
+  [[nodiscard]] auto codepoints() const noexcept -> std::span<const char32_t>;
+
   // --- Resize (placeholder for Task 10) -------------------------------------
 
   void resize(uint32_t new_cols, uint32_t new_rows);

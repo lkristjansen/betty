@@ -1,4 +1,5 @@
 #pragma once
+#include <cstdint>
 #include <expected>
 #include <functional>
 #include <memory>
@@ -6,23 +7,34 @@
 #include <string>
 #include "types.hpp"
 
-// Forward-declare HWND without pulling in <windows.h>.
-using HWND = struct HWND__*;
-
 namespace betty::platform {
 
-struct window_settings {
-  window_dimensions size{ default_window_size };
-  std::wstring class_name{ L"betty_window_class" };
-  std::wstring title{ L"betty" };
-  window_show_command show_command{ default_show_command };
-  // Note: no HINSTANCE — make_window() calls GetModuleHandleW(nullptr) internally.
-};
-
+namespace detail {
 // Callback storage (heap-allocated; pointer stored via GWLP_USERDATA).
+// Internal implementation detail — not part of the public API.
 struct window_callbacks {
   std::function<void(vk_code, bool ctrl, bool shift, bool alt)> on_key;
   std::function<void(uint32_t)> on_char;
+};
+} // namespace detail
+
+// Opaque window handle — callers can only check validity.
+struct window_handle {
+  [[nodiscard]] explicit operator bool() const noexcept { return handle_ != nullptr; }
+private:
+  explicit window_handle(void* h) noexcept : handle_(h) {}
+  void* handle_;
+  friend struct win32_window;
+  friend auto make_swap_chain(struct d3d_device const&, win32_window const&, struct swap_chain_settings const&)
+    -> std::expected<struct d3d_swap_chain, std::error_code>;
+};
+
+struct window_settings {
+  window_dimensions size{ default_window_size };
+  std::string class_name{ "betty_window_class" };
+  std::string title{ "betty" };
+  window_show_command show_command{ default_show_command };
+  // Note: no HINSTANCE — make_window() calls GetModuleHandleW(nullptr) internally.
 };
 
 // Move-only window handle. Closes the window on destruction.
@@ -34,16 +46,18 @@ struct win32_window {
   win32_window(win32_window const&) = delete;
   win32_window& operator=(win32_window const&) = delete;
 
-  [[nodiscard]] auto native_handle() const noexcept -> HWND { return handle_; }
+  [[nodiscard]] auto native_handle() const noexcept -> window_handle;
 
 private:
+  [[nodiscard]] auto as_hwnd() const noexcept -> void* { return handle_; }
+
   struct empty_tag {};
   explicit win32_window(empty_tag) noexcept : handle_(nullptr) {}
 
-  HWND handle_{ nullptr };
+  void* handle_{ nullptr };
 
   // Callback storage (heap-allocated; pointer stored via GWLP_USERDATA).
-  std::unique_ptr<window_callbacks> callbacks_;
+  std::unique_ptr<detail::window_callbacks> callbacks_;
 
   friend auto make_window(window_settings const&)
     -> std::expected<win32_window, std::error_code>;

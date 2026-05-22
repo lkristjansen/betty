@@ -345,16 +345,20 @@ auto rasterize_glyph(IDWriteFactory* factory, IDWriteFontFace1* font_face,
 
   for (UINT32 by = 0; by < bounds_height; ++by) {
     int const dy = origin_y + static_cast<int>(by);
-    if (dy < static_cast<int>(slot_y) + k_glyph_padding)
+    int const slot_top = static_cast<int>(slot_y) + static_cast<int>(k_glyph_padding);
+    int const slot_bottom = slot_top + static_cast<int>(cell_height);
+    if (dy < slot_top)
       continue;
-    if (dy >= static_cast<int>(slot_y) + k_glyph_padding + static_cast<int>(cell_height))
+    if (dy >= slot_bottom)
       continue;
 
     for (UINT32 bx = 0; bx < bounds_width; ++bx) {
       int const dx = origin_x + static_cast<int>(bx);
-      if (dx < static_cast<int>(slot_x) + k_glyph_padding)
+      int const slot_left = static_cast<int>(slot_x) + static_cast<int>(k_glyph_padding);
+      int const slot_right = slot_left + static_cast<int>(cell_width);
+      if (dx < slot_left)
         continue;
-      if (dx >= static_cast<int>(slot_x) + k_glyph_padding + static_cast<int>(cell_width))
+      if (dx >= slot_right)
         continue;
 
       // ClearType buffer stores 3 bytes per pixel (R, G, B subpixel coverage).

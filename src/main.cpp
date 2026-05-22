@@ -1,8 +1,8 @@
 #include <format>
+#include <optional>
 #include <string>
 #include <string_view>
 #include <system_error>
-#include <vector>
 
 #include "platform/types.hpp"
 #include "platform/window.hpp"
@@ -34,7 +34,7 @@ int main() {
   auto window_result = platform::make_window(
     platform::window_settings{
       .size = platform::default_window_size,
-      .title = L"betty"
+      .title = "betty"
     }
   );
   if (!window_result) {
@@ -97,7 +97,7 @@ int main() {
   terminal::input_handler input;
 
   // 8. Create shell
-  std::unique_ptr<platform::shell> shell;
+  std::optional<platform::shell> shell;
 
   auto shell_result = platform::make_shell(platform::shell_settings{
     .cols = cols,
@@ -151,14 +151,9 @@ int main() {
     }
 
     // Render the grid
-    auto const& cells = grid.cells();
-    if (cells.size() > 0) {
-      std::vector<char32_t> codepoints;
-      codepoints.reserve(cells.size());
-      for (auto const& cell : cells) {
-        codepoints.push_back(cell.codepoint);
-      }
-      if (auto draw_result = renderer.draw_grid(device, rtv, codepoints, grid.cols(), grid.rows());
+    auto const cps = grid.codepoints();
+    if (!cps.empty()) {
+      if (auto draw_result = renderer.draw_grid(device, rtv, cps, grid.cols(), grid.rows());
           !draw_result) {
         log_error(draw_result.error(), "draw grid");
         exit_code = 1;
@@ -173,11 +168,8 @@ int main() {
     }
   }
 
-  // 11. Cleanup — destroy_shell gives the child process a chance to exit
-  //     gracefully, then shell_impl's destructor handles hard resource cleanup.
-  if (shell) {
-    platform::destroy_shell(std::move(shell));
-  }
+  // 11. Cleanup — shell's destructor sends "exit\r\n", waits for graceful
+  //     shutdown, then releases all resources (ConPTY, pipes, read thread).
 
   return exit_code;
 }

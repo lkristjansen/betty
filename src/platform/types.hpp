@@ -1,33 +1,21 @@
 #pragma once
-#include <cstdint>
+#include <algorithm>
+#include <array>
 #include <cmath>
-#include <stdexcept>
+#include <cstdint>
 #include <string>
 
 namespace betty::platform {
 
 // ===========================================================================
-// Normalised float [0.0, 1.0] — catches out-of-range values at runtime
-// (and at compile time for constexpr / literal usage).
+// Normalised float [0.0, 1.0] — always clamps out-of-range values.
 // ===========================================================================
 
 class normalized_float {
-  // rgba_color needs direct access to value_ for .data() pointer arithmetic.
-  friend struct rgba_color;
 public:
   constexpr normalized_float() noexcept : value_(0.0f) {}
 
-  explicit constexpr normalized_float(float v) : value_(v) {
-    if (v < 0.0f || v > 1.0f) {
-#if defined(_DEBUG) || defined(DEBUG)
-      throw std::domain_error("normalized_float out of [0, 1] range");
-#else
-      // In release, clamp rather than crash — but the debug throw
-      // should have caught it during development.
-      value_ = std::clamp(v, 0.0f, 1.0f);
-#endif
-    }
-  }
+  explicit constexpr normalized_float(float v) : value_(std::clamp(v, 0.0f, 1.0f)) {}
 
   [[nodiscard]] constexpr explicit operator float() const noexcept { return value_; }
   [[nodiscard]] constexpr float get() const noexcept { return value_; }
@@ -37,23 +25,26 @@ private:
 };
 
 // ===========================================================================
-// RGBA colour — layout-verified for ClearRenderTargetView
+// RGBA colour — stores raw floats in a contiguous array for DirectX.
+// Layout-verified at compile time.
 // ===========================================================================
 
 struct rgba_color {
-  normalized_float r, g, b, a;
+  constexpr rgba_color(normalized_float r, normalized_float g,
+                       normalized_float b, normalized_float a)
+    : data_{ r.get(), g.get(), b.get(), a.get() } {}
 
-  // Provide raw pointer for DirectX calls — layout-verified below.
-  [[nodiscard]] auto data() const noexcept -> float const* { return &r.value_; }
+  [[nodiscard]] constexpr auto operator[](std::size_t i) const noexcept -> float { return data_[i]; }
+  // Raw pointer for DirectX calls (e.g. ClearRenderTargetView).
+  [[nodiscard]] constexpr auto data() const noexcept -> float const* { return data_.data(); }
+
+private:
+  std::array<float, 4> data_;
 };
 
 static_assert(sizeof(float) == 4);
 static_assert(std::is_standard_layout_v<rgba_color>);
 static_assert(sizeof(rgba_color) == 4 * sizeof(float));
-static_assert(offsetof(rgba_color, r) == 0);
-static_assert(offsetof(rgba_color, g) == sizeof(float));
-static_assert(offsetof(rgba_color, b) == 2 * sizeof(float));
-static_assert(offsetof(rgba_color, a) == 3 * sizeof(float));
 
 // Compile-time helper: build a colour from 8-bit RGB components.
 inline constexpr rgba_color rgba_from_rgb(std::uint8_t red, std::uint8_t green, std::uint8_t blue,

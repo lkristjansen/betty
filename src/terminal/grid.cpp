@@ -1,5 +1,6 @@
 #include "grid.hpp"
 #include <algorithm>
+#include <cassert>
 #include <cstring>
 
 namespace betty::terminal {
@@ -111,11 +112,19 @@ void terminal_grid::scroll_up() {
 // ===========================================================================
 
 auto terminal_grid::cell(uint32_t row, uint32_t col) const -> grid_cell const& {
+  assert(row < rows_ && col < cols_);
   return cells_[static_cast<size_t>(row) * cols_ + col];
 }
 
 auto terminal_grid::cells() const noexcept -> std::span<const grid_cell> {
   return cells_;
+}
+
+auto terminal_grid::codepoints() const noexcept -> std::span<const char32_t> {
+  // grid_cell is a single char32_t at offset 0, so the memory layout is
+  // identical to an array of char32_t.  Accessing through the first member
+  // of a standard-layout struct is well-defined.
+  return { reinterpret_cast<const char32_t*>(cells_.data()), cells_.size() };
 }
 
 // ===========================================================================
@@ -127,15 +136,15 @@ void terminal_grid::resize(uint32_t new_cols, uint32_t new_rows) {
 
   std::vector<grid_cell> new_cells(static_cast<size_t>(new_cols) * new_rows, grid_cell{});
 
-  // Copy as much of the old content as fits.
+  // Copy as much of the old content as fits, row by row.
   uint32_t const copy_rows = std::min(rows_, new_rows);
   uint32_t const copy_cols = std::min(cols_, new_cols);
 
   for (uint32_t r = 0; r < copy_rows; ++r) {
-    for (uint32_t c = 0; c < copy_cols; ++c) {
-      new_cells[static_cast<size_t>(r) * new_cols + c] =
-        cells_[static_cast<size_t>(r) * cols_ + c];
-    }
+    std::memcpy(
+      new_cells.data() + static_cast<size_t>(r) * new_cols,
+      cells_.data() + static_cast<size_t>(r) * cols_,
+      static_cast<size_t>(copy_cols) * sizeof(grid_cell));
   }
 
   // Clamp cursor to new dimensions.
