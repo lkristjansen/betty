@@ -62,7 +62,7 @@ Each task is a vertical slice: when completed, the user can launch `betty.exe` a
 
 ---
 
-### 8. Erase operations
+### 8. ✅ Erase operations
 **User sees:** `clear` actually clears the screen. Ctrl+L works. Line editing in the shell (backspace, rewrites) erases characters properly.
 - Parse ED (Erase in Display) — clear from cursor to end, clear from beginning to cursor, clear entire screen (and optionally scrollback)
 - Parse EL (Erase in Line) — same variants for the current line
