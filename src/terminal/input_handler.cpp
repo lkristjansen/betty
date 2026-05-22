@@ -101,16 +101,4 @@ auto input_handler::on_keydown(vk_code vk, bool control, bool shift, bool alt) c
   return {};
 }
 
-// ===========================================================================
-// input_handler::on_char
-// ===========================================================================
-
-auto input_handler::on_char(uint32_t codepoint) const -> std::string {
-  // Only handle ASCII range for now.
-  if (codepoint >= 0x20 && codepoint <= 0x7E) {
-    return std::string(1, static_cast<char>(codepoint));
-  }
-  return {};
-}
-
 } // namespace betty::terminal

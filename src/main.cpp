@@ -30,6 +30,7 @@ void log_error(std::error_code ec, std::string_view context) {
 } // anonymous namespace
 
 int main() {
+  
   // 1. Create window
   auto window_result = platform::make_window(
     platform::window_settings{
@@ -37,18 +38,22 @@ int main() {
       .title = "betty"
     }
   );
+
   if (!window_result) {
     log_error(window_result.error(), "create window");
     return 1;
   }
+  
   auto& window = *window_result;
 
   // 2. Create D3D11 device
   auto device_result = platform::make_device();
+  
   if (!device_result) {
     log_error(device_result.error(), "create device");
     return 1;
   }
+  
   auto& device = *device_result;
 
   // 3. Create swap chain

@@ -141,10 +141,10 @@ void terminal_grid::resize(uint32_t new_cols, uint32_t new_rows) {
   uint32_t const copy_cols = std::min(cols_, new_cols);
 
   for (uint32_t r = 0; r < copy_rows; ++r) {
-    std::memcpy(
-      new_cells.data() + static_cast<size_t>(r) * new_cols,
+    std::copy(
       cells_.data() + static_cast<size_t>(r) * cols_,
-      static_cast<size_t>(copy_cols) * sizeof(grid_cell));
+      cells_.data() + static_cast<size_t>(r) * cols_ + copy_cols,
+      new_cells.data() + static_cast<size_t>(r) * new_cols);
   }
 
   // Clamp cursor to new dimensions.
