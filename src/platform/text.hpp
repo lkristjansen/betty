@@ -7,6 +7,8 @@
 #include <system_error>
 #include "types.hpp"
 
+namespace betty::terminal { struct grid_cell; }
+
 namespace betty::platform {
 
 // Opaque forward declarations from gfx.hpp
@@ -16,7 +18,7 @@ struct d3d_render_target_view;
 // --- glyph_renderer ---------------------------------------------------------
 
 // Renders monospace glyphs from a pre-baked texture atlas.
-// All glyphs are white; color is deferred to Task 6.
+// Supports per-cell foreground/background colours via vertex colour data.
 struct glyph_renderer {
   // Accessors for computed font metrics (available after successful creation).
   auto cell_width() const -> uint32_t;
@@ -37,10 +39,12 @@ struct glyph_renderer {
                                 uint32_t start_row) const -> std::expected<void, std::error_code>;
 
   // Draw a terminal grid. `cells` is a row-major flat array of `rows × cols`
-  // codepoints. Each cell is rendered at its grid position.
+  // grid_cell structs (from terminal/grid.hpp). Each cell carries a codepoint
+  // and fg/bg colours. Background quads are drawn for non-default backgrounds;
+  // glyph quads are drawn with the cell's foreground colour.
   // Non-ASCII codepoints (> 127) are rendered as '?'.
   [[nodiscard]] auto draw_grid(d3d_device const& device, d3d_render_target_view const& rtv,
-                                std::span<const char32_t> cells,
+                                std::span<const terminal::grid_cell> cells,
                                 uint32_t cols, uint32_t rows) const
       -> std::expected<void, std::error_code>;
 

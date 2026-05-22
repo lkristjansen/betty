@@ -20,7 +20,10 @@ terminal_grid::terminal_grid(uint32_t cols, uint32_t rows)
 
 void terminal_grid::write_char(char32_t cp) {
   if (cursor_col_ < cols_) {
-    cells_[static_cast<size_t>(cursor_row_) * cols_ + cursor_col_].codepoint = cp;
+    auto& cell = cells_[static_cast<size_t>(cursor_row_) * cols_ + cursor_col_];
+    cell.codepoint = cp;
+    cell.fg = current_fg_;
+    cell.bg = current_bg_;
   }
 
   cursor_col_++;
@@ -44,9 +47,8 @@ void terminal_grid::write_char(char32_t cp) {
 
 void terminal_grid::write_bytes(std::string_view data) {
   for (unsigned char const b : data) {
-    auto a = parser_.parse(b);
-    if (a) {
-      apply(*a);
+    for (auto const& a : parser_.parse(b)) {
+      apply(a);
     }
   }
 }
@@ -81,6 +83,16 @@ void terminal_grid::apply(action const& a) {
     break;
   case action_type::move_cursor_back:
     cursor_col_ = (cursor_col_ > a.count) ? cursor_col_ - a.count : 0;
+    break;
+  case action_type::sgr_reset:
+    current_fg_ = default_fg();
+    current_bg_ = default_bg();
+    break;
+  case action_type::sgr_set_fg:
+    current_fg_ = a.color;
+    break;
+  case action_type::sgr_set_bg:
+    current_bg_ = a.color;
     break;
   }
 }
@@ -142,13 +154,6 @@ auto terminal_grid::cell(uint32_t row, uint32_t col) const -> grid_cell const& {
 
 auto terminal_grid::cells() const noexcept -> std::span<const grid_cell> {
   return cells_;
-}
-
-auto terminal_grid::codepoints() const noexcept -> std::span<const char32_t> {
-  // grid_cell is a single char32_t at offset 0, so the memory layout is
-  // identical to an array of char32_t.  Accessing through the first member
-  // of a standard-layout struct is well-defined.
-  return { reinterpret_cast<const char32_t*>(cells_.data()), cells_.size() };
 }
 
 // ===========================================================================

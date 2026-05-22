@@ -2,6 +2,7 @@
 #include "gfx.hpp"
 #include "gfx_impl.hpp"
 #include "error.hpp"
+#include "terminal/grid.hpp"
 #define WIN32_LEAN_AND_MEAN
 #define NOMINMAX
 #include <d3d11.h>
@@ -36,22 +37,17 @@ inline constexpr uint32_t k_atlas_rows   = 8u;
 inline constexpr uint32_t k_atlas_glyphs = 128u;  // ASCII 0–127
 inline constexpr uint32_t k_glyph_padding = 1u;   // px each side
 
-// Catppuccin Mocha foreground colour (#cdd6f4).
-// Pre-baked into the atlas so the pixel shader can sample and output directly.
-inline constexpr uint8_t k_fg_r = 0xCD;
-inline constexpr uint8_t k_fg_g = 0xD6;
-inline constexpr uint8_t k_fg_b = 0xF4;
-
 // ===========================================================================
 // Vertex and constant-buffer layouts
 // ===========================================================================
 
 struct glyph_vertex {
-  float x, y;   // pixel position (top-left origin)
-  float u, v;   // texture coordinates (0..1)
+  float x, y, u, v; // pixel position + UV (top-left origin)
+  float r, g, b;    // colour (0–1, pre-normalized)
+  float pad;        // alignment to 32 bytes
 };
-static_assert(sizeof(glyph_vertex) == 4 * sizeof(float),
-              "glyph_vertex must be 16 bytes for D3D11_INPUT_ELEMENT_DESC");
+static_assert(sizeof(glyph_vertex) == 8 * sizeof(float),
+              "glyph_vertex must be 32 bytes for D3D11_INPUT_ELEMENT_DESC");
 
 struct glyph_constants {
   float window_width;
@@ -89,11 +85,13 @@ cbuffer Constants : register(b0) {
 struct VS_INPUT {
   float2 position : POSITION;
   float2 uv       : TEXCOORD;
+  float3 color    : COLOR;
 };
 
 struct VS_OUTPUT {
   float4 position : SV_POSITION;
   float2 uv       : TEXCOORD;
+  float3 color    : COLOR;
 };
 
 VS_OUTPUT main(VS_INPUT input) {
@@ -104,6 +102,7 @@ VS_OUTPUT main(VS_INPUT input) {
   output.position.y = 1.0 - (input.position.y / window_size.y) * 2.0;
   output.position.zw = float2(0.0, 1.0);
   output.uv = input.uv;
+  output.color = input.color;
   return output;
 }
 )";
@@ -115,10 +114,17 @@ SamplerState linear_sampler  : register(s0);
 struct VS_OUTPUT {
   float4 position : SV_POSITION;
   float2 uv       : TEXCOORD;
+  float3 color    : COLOR;
 };
 
 float4 main(VS_OUTPUT input) : SV_TARGET {
-  return glyph_atlas.Sample(linear_sampler, input.uv);
+  if (input.uv.x < 0.0) {
+    // Background quad: solid colour (no texture sample).
+    return float4(input.color, 1.0);
+  }
+  // Foreground glyph: multiply atlas alpha by vertex colour.
+  float alpha = glyph_atlas.Sample(linear_sampler, input.uv).a;
+  return float4(input.color * alpha, alpha);
 }
 )";
 
@@ -372,9 +378,11 @@ auto rasterize_glyph(IDWriteFactory* factory, IDWriteFontFace1* font_face,
 
       size_t const buf_idx = static_cast<size_t>(dy) * atlas_width + static_cast<size_t>(dx);
       size_t const pixel_offset = buf_idx * 4;
-      staging_buffer[pixel_offset + 0] = k_fg_r;
-      staging_buffer[pixel_offset + 1] = k_fg_g;
-      staging_buffer[pixel_offset + 2] = k_fg_b;
+      // Alpha-only atlas: glyph shapes stored as white with alpha coverage.
+      // Colour is applied per-vertex by the pixel shader.
+      staging_buffer[pixel_offset + 0] = 255;
+      staging_buffer[pixel_offset + 1] = 255;
+      staging_buffer[pixel_offset + 2] = 255;
       staging_buffer[pixel_offset + 3] = alpha;
     }
   }
@@ -533,10 +541,9 @@ auto make_glyph_renderer(d3d_device const& device, window_dimensions const& wind
   // --- 10. Create input layout ----------------------------------------------
   {
     D3D11_INPUT_ELEMENT_DESC layout[] = {
-      { "POSITION", 0, DXGI_FORMAT_R32G32_FLOAT, 0, 0,
-        D3D11_INPUT_PER_VERTEX_DATA, 0 },
-      { "TEXCOORD", 0, DXGI_FORMAT_R32G32_FLOAT, 0, D3D11_APPEND_ALIGNED_ELEMENT,
-        D3D11_INPUT_PER_VERTEX_DATA, 0 },
+      { "POSITION", 0, DXGI_FORMAT_R32G32_FLOAT,   0, 0,                             D3D11_INPUT_PER_VERTEX_DATA, 0 },
+      { "TEXCOORD", 0, DXGI_FORMAT_R32G32_FLOAT,   0, D3D11_APPEND_ALIGNED_ELEMENT,  D3D11_INPUT_PER_VERTEX_DATA, 0 },
+      { "COLOR",    0, DXGI_FORMAT_R32G32B32_FLOAT, 0, D3D11_APPEND_ALIGNED_ELEMENT,  D3D11_INPUT_PER_VERTEX_DATA, 0 },
     };
 
     hr = d3d_dev->CreateInputLayout(layout, ARRAYSIZE(layout),
@@ -708,11 +715,12 @@ auto glyph_renderer::draw(d3d_device const& device,
     float y1 = y0 + static_cast<float>(impl_->cell_height);
 
     // Quad vertices (top-left, top-right, bottom-right, bottom-left).
+    // Default white colour — no per-glyph colour without a grid.
     uint32_t v = quad_count * k_vertices_per_quad;
-    vertices[v + 0] = { x0, y0, slot.u0, slot.v0 };
-    vertices[v + 1] = { x1, y0, slot.u1, slot.v0 };
-    vertices[v + 2] = { x1, y1, slot.u1, slot.v1 };
-    vertices[v + 3] = { x0, y1, slot.u0, slot.v1 };
+    vertices[v + 0] = { x0, y0, slot.u0, slot.v0, 1.0f, 1.0f, 1.0f, 0 };
+    vertices[v + 1] = { x1, y0, slot.u1, slot.v0, 1.0f, 1.0f, 1.0f, 0 };
+    vertices[v + 2] = { x1, y1, slot.u1, slot.v1, 1.0f, 1.0f, 1.0f, 0 };
+    vertices[v + 3] = { x0, y1, slot.u0, slot.v1, 1.0f, 1.0f, 1.0f, 0 };
 
     ++col;
     ++quad_count;
@@ -807,10 +815,10 @@ auto glyph_renderer::draw_text(d3d_device const& device,
 
       // Quad vertices (top-left, top-right, bottom-right, bottom-left).
       uint32_t v = quad_count * k_vertices_per_quad;
-      vertices[v + 0] = { x0, y0, slot.u0, slot.v0 };
-      vertices[v + 1] = { x1, y0, slot.u1, slot.v0 };
-      vertices[v + 2] = { x1, y1, slot.u1, slot.v1 };
-      vertices[v + 3] = { x0, y1, slot.u0, slot.v1 };
+      vertices[v + 0] = { x0, y0, slot.u0, slot.v0, 1.0f, 1.0f, 1.0f, 0 };
+      vertices[v + 1] = { x1, y0, slot.u1, slot.v0, 1.0f, 1.0f, 1.0f, 0 };
+      vertices[v + 2] = { x1, y1, slot.u1, slot.v1, 1.0f, 1.0f, 1.0f, 0 };
+      vertices[v + 3] = { x0, y1, slot.u0, slot.v1, 1.0f, 1.0f, 1.0f, 0 };
 
       ++quad_count;
     }
@@ -854,12 +862,12 @@ auto glyph_renderer::draw_text(d3d_device const& device,
 }
 
 // ===========================================================================
-// glyph_renderer::draw_grid — render a full terminal grid
+// glyph_renderer::draw_grid — render a full terminal grid with per-cell colours
 // ===========================================================================
 
 auto glyph_renderer::draw_grid(d3d_device const& device,
                                 d3d_render_target_view const& rtv,
-                                std::span<const char32_t> cells,
+                                std::span<const terminal::grid_cell> cells,
                                 uint32_t cols, uint32_t rows) const
   -> std::expected<void, std::error_code> {
 
@@ -882,29 +890,64 @@ auto glyph_renderer::draw_grid(d3d_device const& device,
   auto* vertices = static_cast<glyph_vertex*>(mapped.pData);
   uint32_t quad_count = 0;
 
+  // Helper: emit four vertices for a quad.
+  auto emit_quad = [&](float x0, float y0, float x1, float y1,
+                        float u0, float v0, float u1, float v1,
+                        float r, float g, float b) {
+    if (quad_count >= k_max_glyphs_per_frame) return;
+    uint32_t v = quad_count * k_vertices_per_quad;
+    vertices[v + 0] = { x0, y0, u0, v0, r, g, b, 0 };
+    vertices[v + 1] = { x1, y0, u1, v0, r, g, b, 0 };
+    vertices[v + 2] = { x1, y1, u1, v1, r, g, b, 0 };
+    vertices[v + 3] = { x0, y1, u0, v1, r, g, b, 0 };
+    ++quad_count;
+  };
+
+  // Resolve a colour: if is_default, substitute the terminal default.
+  auto resolve_fg = [](terminal::rgb_color c) -> terminal::rgb_color {
+    if (c.flags & 1) return terminal::k_default_fg_color;
+    return c;
+  };
+
   for (uint32_t row = 0; row < draw_rows; ++row) {
     float const y0 = static_cast<float>(row * impl_->cell_height);
     float const y1 = y0 + static_cast<float>(impl_->cell_height);
 
     for (uint32_t col = 0; col < draw_cols && quad_count < k_max_glyphs_per_frame; ++col) {
       size_t const idx = static_cast<size_t>(row) * cols + col;
-      char32_t cp = idx < cells.size() ? cells[idx] : U' ';
+      if (idx >= cells.size()) continue;
 
-      // Map to ASCII glyph atlas.
-      unsigned char glyph = (cp <= 127) ? static_cast<unsigned char>(cp) : static_cast<unsigned char>('?');
+      auto const& cell = cells[idx];
 
-      auto& slot = impl_->glyph_slots[glyph];
       float const x0 = static_cast<float>(col * impl_->cell_width);
       float const x1 = x0 + static_cast<float>(impl_->cell_width);
 
-      // Quad vertices (top-left, top-right, bottom-right, bottom-left).
-      uint32_t v = quad_count * k_vertices_per_quad;
-      vertices[v + 0] = { x0, y0, slot.u0, slot.v0 };
-      vertices[v + 1] = { x1, y0, slot.u1, slot.v0 };
-      vertices[v + 2] = { x1, y1, slot.u1, slot.v1 };
-      vertices[v + 3] = { x0, y1, slot.u0, slot.v1 };
+      // Background quad — only if the cell has an explicit (non-default) bg.
+      if (!(cell.bg.flags & 1)) {
+        auto const& bg = cell.bg;
+        float const nr = static_cast<float>(bg.r) / 255.0f;
+        float const ng = static_cast<float>(bg.g) / 255.0f;
+        float const nb = static_cast<float>(bg.b) / 255.0f;
+        // Negative u signals the pixel shader to skip atlas sampling.
+        emit_quad(x0, y0, x1, y1, -1.0f, 0.0f, -1.0f, 0.0f, nr, ng, nb);
+      }
 
-      ++quad_count;
+      // Foreground glyph — only if the cell is not a space.
+      char32_t const cp = cell.codepoint;
+      if (cp != U' ' && cp != 0) {
+        unsigned char glyph =
+          (cp <= 127) ? static_cast<unsigned char>(cp)
+                        : static_cast<unsigned char>('?');
+
+        auto& slot = impl_->glyph_slots[glyph];
+        auto const fg = resolve_fg(cell.fg);
+        float const nr = static_cast<float>(fg.r) / 255.0f;
+        float const ng = static_cast<float>(fg.g) / 255.0f;
+        float const nb = static_cast<float>(fg.b) / 255.0f;
+
+        emit_quad(x0, y0, x1, y1, slot.u0, slot.v0, slot.u1, slot.v1,
+                   nr, ng, nb);
+      }
     }
   }
 

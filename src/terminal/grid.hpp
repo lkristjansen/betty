@@ -13,8 +13,9 @@ namespace betty::terminal {
 // ===========================================================================
 
 struct grid_cell {
-  char32_t codepoint = U' ';  // default: space
-  // Future (Task 6):  foreground / background colour
+  char32_t codepoint = U' ';         // default: space
+  rgb_color fg = default_fg();       // foreground colour
+  rgb_color bg = default_bg();       // background colour
   // Future (Task 12): bold, italic, underline, strikethrough flags
 };
 
@@ -68,10 +69,6 @@ public:
   [[nodiscard]] auto cell(uint32_t row, uint32_t col) const -> grid_cell const&;
   [[nodiscard]] auto cells() const noexcept -> std::span<const grid_cell>;
 
-  // View the grid as a contiguous array of codepoints.
-  // Safe because grid_cell is a single char32_t at offset 0.
-  [[nodiscard]] auto codepoints() const noexcept -> std::span<const char32_t>;
-
   // --- Resize (placeholder for Task 10) -------------------------------------
 
   void resize(uint32_t new_cols, uint32_t new_rows);
@@ -83,6 +80,10 @@ private:
   uint32_t cursor_row_ = 0;
   std::vector<grid_cell> cells_;  // size = cols_ * rows_, row-major
   vt_parser parser_;
+
+  // Current SGR state — applied to each cell on write_char.
+  rgb_color current_fg_ = default_fg();
+  rgb_color current_bg_ = default_bg();
 };
 
 } // namespace betty::terminal

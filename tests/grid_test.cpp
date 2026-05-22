@@ -195,16 +195,16 @@ TEST_CASE("Grid — cells() returns full span", "[grid][access]") {
     CHECK(c[1].codepoint == U' ');
 }
 
-TEST_CASE("Grid — codepoints() returns codepoint view", "[grid][access]") {
+TEST_CASE("Grid — cells() returns full cell data", "[grid][access]") {
     terminal_grid g(2, 2);
     g.write_char(U'a');
     g.write_char(U'b');
-    auto cp = g.codepoints();
-    REQUIRE(cp.size() == 4);
-    CHECK(cp[0] == U'a');
-    CHECK(cp[1] == U'b');
-    CHECK(cp[2] == U' ');
-    CHECK(cp[3] == U' ');
+    auto c = g.cells();
+    REQUIRE(c.size() == 4);
+    CHECK(c[0].codepoint == U'a');
+    CHECK(c[1].codepoint == U'b');
+    CHECK(c[2].codepoint == U' ');
+    CHECK(c[3].codepoint == U' ');
 }
 
 // ===========================================================================
