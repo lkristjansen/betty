@@ -87,25 +87,25 @@ TEST_CASE("Escape state — ESC [ enters CSI entry", "[escape]") {
     CHECK(p.parse('[').empty());     // '[' — still no action
 }
 
-TEST_CASE("Escape state — DECSC (ESC 7) saves cursor, no action", "[escape]") {
+TEST_CASE("Escape state — DECSC (ESC 7) emits save_cursor action", "[escape]") {
     vt_parser p;
     CHECK(p.parse(0x1B).empty());
-    CHECK(p.parse('7').empty());
+    auto const v = p.parse('7');
+    REQUIRE(v.size() == 1);
+    CHECK(v[0].type == action_type::save_cursor);
 
     // State should have returned to ground.
-    auto const v = p.parse('A');
-    REQUIRE(v.size() == 1);
-    CHECK(v[0].codepoint == 65);
+    auto const v2 = p.parse('A');
+    REQUIRE(v2.size() == 1);
+    CHECK(v2[0].codepoint == 65);
 }
 
-TEST_CASE("Escape state — DECRC (ESC 8) restores cursor to default (0,0)", "[escape]") {
+TEST_CASE("Escape state — DECRC (ESC 8) emits restore_cursor action", "[escape]") {
     vt_parser p;
     CHECK(p.parse(0x1B).empty());
     auto const v = p.parse('8');
     REQUIRE(v.size() == 1);
-    CHECK(v[0].type == action_type::move_cursor);
-    CHECK(v[0].row == 0);
-    CHECK(v[0].col == 0);
+    CHECK(v[0].type == action_type::restore_cursor);
 }
 
 TEST_CASE("Escape state — unknown ESC sequence discarded, state recovers", "[escape]") {
@@ -267,39 +267,33 @@ TEST_CASE("Incremental — state resets after complete CSI", "[incremental]") {
 // 5f — DECSC / DECRC round-trip
 // ===========================================================================
 
-TEST_CASE("DECSC/DECRC — save then restore defaults", "[dec]") {
+TEST_CASE("DECSC/DECRC — save then restore emits correct action types", "[dec]") {
     vt_parser p;
     CHECK(p.parse(0x1B).empty());
-    CHECK(p.parse('7').empty());   // DECSC
+    auto const v_save = p.parse('7');
+    REQUIRE(v_save.size() == 1);
+    CHECK(v_save[0].type == action_type::save_cursor);
 
     CHECK(p.parse(0x1B).empty());
-    auto const v = p.parse('8');   // DECRC
-    REQUIRE(v.size() == 1);
-    CHECK(v[0].type == action_type::move_cursor);
-    CHECK(v[0].row == 0);
-    CHECK(v[0].col == 0);
+    auto const v_restore = p.parse('8');
+    REQUIRE(v_restore.size() == 1);
+    CHECK(v_restore[0].type == action_type::restore_cursor);
 }
 
-TEST_CASE("DECSC/DECRC — move, save, move, restore", "[dec]") {
+TEST_CASE("DECSC/DECRC — parser emits save/restore actions in correct order", "[dec]") {
     vt_parser p;
-
-    // CUP to row 5, col 10 (0-based: 4, 9)
-    parse_sequence(p, "\x1B[5;10H");
 
     // DECSC — save
     CHECK(p.parse(0x1B).empty());
-    CHECK(p.parse('7').empty());
-
-    // CUP to row 3, col 3 (0-based: 2, 2)
-    parse_sequence(p, "\x1B[3;3H");
+    auto const v1 = p.parse('7');
+    REQUIRE(v1.size() == 1);
+    CHECK(v1[0].type == action_type::save_cursor);
 
     // DECRC — restore
     CHECK(p.parse(0x1B).empty());
-    auto const v = p.parse('8');
-    REQUIRE(v.size() == 1);
-    CHECK(v[0].type == action_type::move_cursor);
-    CHECK(v[0].row == 4);
-    CHECK(v[0].col == 9);
+    auto const v2 = p.parse('8');
+    REQUIRE(v2.size() == 1);
+    CHECK(v2[0].type == action_type::restore_cursor);
 }
 
 // ===========================================================================

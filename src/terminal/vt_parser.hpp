@@ -79,6 +79,8 @@ enum class action_type : uint8_t {
   move_cursor_down,
   move_cursor_forward,
   move_cursor_back,
+  save_cursor,         // DECSC — save current cursor position
+  restore_cursor,      // DECRC — restore saved cursor position
   sgr_reset,          // reset fg/bg to defaults (SGR 0)
   sgr_set_fg,         // set foreground colour
   sgr_set_bg,         // set background colour
@@ -123,15 +125,6 @@ private:
 
   state state_ = state::ground;
   std::string param_buffer_;  // collects CSI parameter bytes (digits, ';')
-
-  // Saved-cursor position (for DECSC / DECRC).  Initialised to origin.
-  uint32_t saved_cursor_row_ = 0;
-  uint32_t saved_cursor_col_ = 0;
-
-  // Tracked cursor position (updated on every emitted action that moves
-  // the cursor) so that DECSC captures a meaningful location.
-  uint32_t tracked_cursor_row_ = 0;
-  uint32_t tracked_cursor_col_ = 0;
 };
 
 } // namespace betty::terminal

@@ -180,30 +180,24 @@ auto vt_parser::dispatch(char const final_byte) -> std::vector<action> {
     action a{};
     a.type  = action_type::move_cursor_up;
     a.count = p1;
-    tracked_cursor_row_ =
-      (tracked_cursor_row_ > p1) ? tracked_cursor_row_ - p1 : 0;
     return {a};
   }
   case 'B': { // CUD — Cursor Down
     action a{};
     a.type  = action_type::move_cursor_down;
     a.count = p1;
-    tracked_cursor_row_ += p1;
     return {a};
   }
   case 'C': { // CUF — Cursor Forward
     action a{};
     a.type  = action_type::move_cursor_forward;
     a.count = p1;
-    tracked_cursor_col_ += p1;
     return {a};
   }
   case 'D': { // CUB — Cursor Back
     action a{};
     a.type  = action_type::move_cursor_back;
     a.count = p1;
-    tracked_cursor_col_ =
-      (tracked_cursor_col_ > p1) ? tracked_cursor_col_ - p1 : 0;
     return {a};
   }
   case 'H':   // CUP — Cursor Position
@@ -213,8 +207,6 @@ auto vt_parser::dispatch(char const final_byte) -> std::vector<action> {
     // Convert from 1-based to 0-based.
     a.row = (p1 > 0) ? p1 - 1 : 0;
     a.col = (p2 > 0) ? p2 - 1 : 0;
-    tracked_cursor_row_ = a.row;
-    tracked_cursor_col_ = a.col;
     return {a};
   }
   default:
@@ -247,7 +239,6 @@ auto vt_parser::parse(unsigned char const byte) -> std::vector<action> {
         action a{};
         a.type       = action_type::write_char;
         a.codepoint  = static_cast<char32_t>(byte);
-        tracked_cursor_col_++;
         return {a};
       }
       // Other C0 controls are silently ignored.
@@ -264,20 +255,12 @@ auto vt_parser::parse(unsigned char const byte) -> std::vector<action> {
       param_buffer_.clear();
       return {};
     case '7': { // DECSC — Save Cursor
-      saved_cursor_row_ = tracked_cursor_row_;
-      saved_cursor_col_ = tracked_cursor_col_;
       state_ = state::ground;
-      return {};
+      return {action{action_type::save_cursor}};
     }
     case '8': { // DECRC — Restore Cursor
       state_ = state::ground;
-      action a{};
-      a.type = action_type::move_cursor;
-      a.row  = saved_cursor_row_;
-      a.col  = saved_cursor_col_;
-      tracked_cursor_row_ = a.row;
-      tracked_cursor_col_ = a.col;
-      return {a};
+      return {action{action_type::restore_cursor}};
     }
     default:
       // Unknown escape sequence — discard.

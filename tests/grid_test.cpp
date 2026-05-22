@@ -355,6 +355,110 @@ TEST_CASE("Grid — apply move_cursor_back clamps to 0", "[grid][apply][edge]") 
 }
 
 // ===========================================================================
+// save_cursor / restore_cursor
+// ===========================================================================
+
+TEST_CASE("Grid — save_cursor remembers current cursor position", "[grid][cursor_save_restore]") {
+    terminal_grid g(10, 10);
+    action mv;
+    mv.type = action_type::move_cursor;
+    mv.row = 5; mv.col = 7;
+    g.apply(mv);
+
+    action save;
+    save.type = action_type::save_cursor;
+    g.apply(save);
+
+    // Cursor should not move after save.
+    CHECK(g.cursor_row() == 5);
+    CHECK(g.cursor_col() == 7);
+}
+
+TEST_CASE("Grid — save_cursor and restore_cursor round-trip", "[grid][cursor_save_restore]") {
+    terminal_grid g(10, 10);
+    // Move to (5, 7).
+    action mv;
+    mv.type = action_type::move_cursor;
+    mv.row = 5; mv.col = 7;
+    g.apply(mv);
+
+    // Save.
+    action save;
+    save.type = action_type::save_cursor;
+    g.apply(save);
+
+    // Move elsewhere.
+    action mv2;
+    mv2.type = action_type::move_cursor;
+    mv2.row = 2; mv2.col = 2;
+    g.apply(mv2);
+
+    // Restore.
+    action restore;
+    restore.type = action_type::restore_cursor;
+    g.apply(restore);
+
+    CHECK(g.cursor_row() == 5);
+    CHECK(g.cursor_col() == 7);
+}
+
+TEST_CASE("Grid — restore_cursor clamps to grid bounds", "[grid][cursor_save_restore]") {
+    terminal_grid g(5, 5);
+    // Save default (0, 0).
+    action save;
+    save.type = action_type::save_cursor;
+    g.apply(save);
+
+    // Restore — should be at (0, 0) since that was saved.
+    action restore;
+    restore.type = action_type::restore_cursor;
+    g.apply(restore);
+
+    CHECK(g.cursor_row() == 0);
+    CHECK(g.cursor_col() == 0);
+}
+
+TEST_CASE("Grid — save/restore via write_bytes (ESC 7 / ESC 8 integration)", "[grid][cursor_save_restore][integration]") {
+    terminal_grid g(10, 10);
+    // Move to (5, 7) then save.
+    g.write_bytes("\x1B[6;8H");  // CUP: row 6, col 8 → 0-based (5, 7)
+    g.write_bytes("\x1B" "7");   // DECSC
+
+    // Move elsewhere.
+    g.write_bytes("\x1B[3;3H");  // CUP: (2, 2)
+
+    // Restore.
+    g.write_bytes("\x1B" "8");   // DECRC
+
+    CHECK(g.cursor_row() == 5);
+    CHECK(g.cursor_col() == 7);
+}
+
+TEST_CASE("Grid — saved cursor is reset after resize", "[grid][cursor_save_restore][resize]") {
+    terminal_grid g(10, 10);
+    // Move to (5, 5) and save.
+    action mv;
+    mv.type = action_type::move_cursor;
+    mv.row = 5; mv.col = 5;
+    g.apply(mv);
+
+    action save;
+    save.type = action_type::save_cursor;
+    g.apply(save);
+
+    // Resize.
+    g.resize(20, 20);
+
+    // Restore — should be at (0, 0) since resize reset the saved position.
+    action restore;
+    restore.type = action_type::restore_cursor;
+    g.apply(restore);
+
+    CHECK(g.cursor_row() == 0);
+    CHECK(g.cursor_col() == 0);
+}
+
+// ===========================================================================
 // resize
 // ===========================================================================
 

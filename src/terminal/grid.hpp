@@ -85,6 +85,8 @@ private:
   uint32_t rows_;
   uint32_t cursor_col_ = 0;
   uint32_t cursor_row_ = 0;
+  uint32_t saved_cursor_col_ = 0;
+  uint32_t saved_cursor_row_ = 0;
   std::vector<grid_cell> cells_;  // size = cols_ * rows_, row-major
   vt_parser parser_;
 

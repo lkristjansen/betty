@@ -84,6 +84,14 @@ void terminal_grid::apply(action const& a) {
   case action_type::move_cursor_back:
     cursor_col_ = (cursor_col_ > a.count) ? cursor_col_ - a.count : 0;
     break;
+  case action_type::save_cursor:
+    saved_cursor_row_ = cursor_row_;
+    saved_cursor_col_ = cursor_col_;
+    break;
+  case action_type::restore_cursor:
+    cursor_row_ = std::min(saved_cursor_row_, rows_ > 0 ? rows_ - 1 : 0);
+    cursor_col_ = std::min(saved_cursor_col_, cols_ > 0 ? cols_ - 1 : 0);
+    break;
   case action_type::sgr_reset:
     current_fg_ = default_fg();
     current_bg_ = default_bg();
@@ -281,6 +289,10 @@ void terminal_grid::resize(uint32_t new_cols, uint32_t new_rows) {
   // Clamp cursor to new dimensions.
   if (cursor_col_ >= new_cols) cursor_col_ = new_cols > 0 ? new_cols - 1 : 0;
   if (cursor_row_ >= new_rows) cursor_row_ = new_rows > 0 ? new_rows - 1 : 0;
+
+  // Reset saved cursor — it's stale after a resize.
+  saved_cursor_row_ = 0;
+  saved_cursor_col_ = 0;
 
   cols_ = new_cols;
   rows_ = new_rows;
