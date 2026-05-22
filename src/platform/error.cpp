@@ -56,10 +56,10 @@ public:
 
 // -----------------------------------------------------------------------
 
-class d3d_error_category_impl : public std::error_category {
+class hresult_error_category_impl : public std::error_category {
 public:
   auto name() const noexcept -> char const* override {
-    return "d3d";
+    return "hresult";
   }
 
   auto message(int ev) const -> std::string override {
@@ -106,8 +106,8 @@ auto win32_category() -> std::error_category const& {
   return instance;
 }
 
-auto d3d_category() -> std::error_category const& {
-  static d3d_error_category_impl instance;
+auto hresult_category() -> std::error_category const& {
+  static hresult_error_category_impl instance;
   return instance;
 }
 
@@ -119,8 +119,8 @@ auto make_win32_error(unsigned long code) -> std::error_code {
   return std::error_code(static_cast<int>(code), win32_category());
 }
 
-auto make_d3d_error(long hr) -> std::error_code {
-  return std::error_code(static_cast<int>(hr), d3d_category());
+auto make_hresult_error(long hr) -> std::error_code {
+  return std::error_code(static_cast<int>(hr), hresult_category());
 }
 
 } // namespace betty::platform

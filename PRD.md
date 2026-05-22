@@ -153,7 +153,7 @@ Three core modules:
 | Green           | `#a6e3a1` |
 | Yellow          | `#f9e2af` |
 | Blue            | `#89b4fa` |
-| Magenta         | `#f5c2e7` |
+| Magenta         | `#cba6f7` |
 | Cyan            | `#94e2d5` |
 | White           | `#bac2de` |
 | Bright Black    | `#585b70` |

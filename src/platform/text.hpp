@@ -24,6 +24,13 @@ struct glyph_renderer {
   auto cell_width() const -> uint32_t;
   auto cell_height() const -> uint32_t;
 
+  // Update the constant buffer with new window dimensions.
+  // Must be called after a window resize so the vertex shader's NDC
+  // transform uses the correct pixel dimensions.
+  [[nodiscard]] auto update_dimensions(d3d_device const& device,
+                                        window_dimensions const& dims) const
+      -> std::expected<void, std::error_code>;
+
   // Draw the given text at cell position (col=0, row=0).
   // Rebinds the RTV before drawing (the caller must pass the current RTV).
   // Returns an error if the vertex buffer cannot be mapped (e.g. device removed).

@@ -409,7 +409,7 @@ auto make_glyph_renderer(d3d_device const& device, window_dimensions const& wind
     __uuidof(IDWriteFactory),
     reinterpret_cast<IUnknown**>(p->dwrite_factory.GetAddressOf())
   );
-  if (FAILED(hr)) return std::unexpected(make_d3d_error(hr));
+  if (FAILED(hr)) return std::unexpected(make_hresult_error(hr));
 
   // --- 2. Create text format ------------------------------------------------
   hr = p->dwrite_factory->CreateTextFormat(
@@ -421,7 +421,7 @@ auto make_glyph_renderer(d3d_device const& device, window_dimensions const& wind
     L"en-US",
     p->text_format.GetAddressOf()
   );
-  if (FAILED(hr)) return std::unexpected(make_d3d_error(hr));
+  if (FAILED(hr)) return std::unexpected(make_hresult_error(hr));
 
   // --- 3. Get font face & metrics -------------------------------------------
   uint32_t font_ascent = 0;
@@ -430,7 +430,7 @@ auto make_glyph_renderer(d3d_device const& device, window_dimensions const& wind
                        p->cell_width, p->cell_height,
                        p->font_face,
                        font_ascent, font_design_units_per_em);
-  if (FAILED(hr)) return std::unexpected(make_d3d_error(hr));
+  if (FAILED(hr)) return std::unexpected(make_hresult_error(hr));
 
   // Compute baseline position: ascent converted to pixels at raster size.
   p->baseline_y = static_cast<float>(font_ascent) * k_font_size
@@ -456,7 +456,7 @@ auto make_glyph_renderer(d3d_device const& device, window_dimensions const& wind
 
     hr = d3d_dev->CreateTexture2D(&tex_desc, nullptr,
                                    p->atlas_texture.GetAddressOf());
-    if (FAILED(hr)) return std::unexpected(make_d3d_error(hr));
+    if (FAILED(hr)) return std::unexpected(make_hresult_error(hr));
   }
 
   // --- 6. Create SRV --------------------------------------------------------
@@ -469,7 +469,7 @@ auto make_glyph_renderer(d3d_device const& device, window_dimensions const& wind
 
     hr = d3d_dev->CreateShaderResourceView(p->atlas_texture.Get(), &srv_desc,
                                             p->atlas_srv.GetAddressOf());
-    if (FAILED(hr)) return std::unexpected(make_d3d_error(hr));
+    if (FAILED(hr)) return std::unexpected(make_hresult_error(hr));
   }
 
   // --- 7. Rasterize glyphs (0x00–0x7F) -------------------------------------
@@ -518,22 +518,22 @@ auto make_glyph_renderer(d3d_device const& device, window_dimensions const& wind
   // --- 8. Compile shaders ---------------------------------------------------
   ComPtr<ID3DBlob> vs_blob;
   hr = compile_shader(k_vertex_shader_src, "main", "vs_5_0", vs_blob.GetAddressOf());
-  if (FAILED(hr)) return std::unexpected(make_d3d_error(hr));
+  if (FAILED(hr)) return std::unexpected(make_hresult_error(hr));
 
   ComPtr<ID3DBlob> ps_blob;
   hr = compile_shader(k_pixel_shader_src, "main", "ps_5_0", ps_blob.GetAddressOf());
-  if (FAILED(hr)) return std::unexpected(make_d3d_error(hr));
+  if (FAILED(hr)) return std::unexpected(make_hresult_error(hr));
 
   // --- 9. Create shader objects ---------------------------------------------
   hr = d3d_dev->CreateVertexShader(vs_blob->GetBufferPointer(),
                                     vs_blob->GetBufferSize(), nullptr,
                                     p->vertex_shader.GetAddressOf());
-  if (FAILED(hr)) return std::unexpected(make_d3d_error(hr));
+  if (FAILED(hr)) return std::unexpected(make_hresult_error(hr));
 
   hr = d3d_dev->CreatePixelShader(ps_blob->GetBufferPointer(),
                                    ps_blob->GetBufferSize(), nullptr,
                                    p->pixel_shader.GetAddressOf());
-  if (FAILED(hr)) return std::unexpected(make_d3d_error(hr));
+  if (FAILED(hr)) return std::unexpected(make_hresult_error(hr));
 
   // --- 10. Create input layout ----------------------------------------------
   {
@@ -547,7 +547,7 @@ auto make_glyph_renderer(d3d_device const& device, window_dimensions const& wind
                                      vs_blob->GetBufferPointer(),
                                      vs_blob->GetBufferSize(),
                                      p->input_layout.GetAddressOf());
-    if (FAILED(hr)) return std::unexpected(make_d3d_error(hr));
+    if (FAILED(hr)) return std::unexpected(make_hresult_error(hr));
   }
 
   // --- 11. Create constant buffer -------------------------------------------
@@ -572,7 +572,7 @@ auto make_glyph_renderer(d3d_device const& device, window_dimensions const& wind
 
     hr = d3d_dev->CreateBuffer(&buf_desc, &init_data,
                                 p->constant_buffer.GetAddressOf());
-    if (FAILED(hr)) return std::unexpected(make_d3d_error(hr));
+    if (FAILED(hr)) return std::unexpected(make_hresult_error(hr));
   }
 
   // --- 12. Create dynamic vertex buffer -------------------------------------
@@ -585,7 +585,7 @@ auto make_glyph_renderer(d3d_device const& device, window_dimensions const& wind
 
     hr = d3d_dev->CreateBuffer(&buf_desc, nullptr,
                                 p->vertex_buffer.GetAddressOf());
-    if (FAILED(hr)) return std::unexpected(make_d3d_error(hr));
+    if (FAILED(hr)) return std::unexpected(make_hresult_error(hr));
   }
 
   // --- 13. Create static index buffer ---------------------------------------
@@ -611,7 +611,7 @@ auto make_glyph_renderer(d3d_device const& device, window_dimensions const& wind
 
     hr = d3d_dev->CreateBuffer(&buf_desc, &init_data,
                                 p->index_buffer.GetAddressOf());
-    if (FAILED(hr)) return std::unexpected(make_d3d_error(hr));
+    if (FAILED(hr)) return std::unexpected(make_hresult_error(hr));
   }
 
   // --- 14. Create sampler state (bilinear, clamp) ---------------------------
@@ -625,7 +625,7 @@ auto make_glyph_renderer(d3d_device const& device, window_dimensions const& wind
 
     hr = d3d_dev->CreateSamplerState(&samp_desc,
                                       p->sampler_state.GetAddressOf());
-    if (FAILED(hr)) return std::unexpected(make_d3d_error(hr));
+    if (FAILED(hr)) return std::unexpected(make_hresult_error(hr));
   }
 
   // --- 15. Create blend state (alpha blending) ------------------------------
@@ -642,7 +642,7 @@ auto make_glyph_renderer(d3d_device const& device, window_dimensions const& wind
 
     hr = d3d_dev->CreateBlendState(&blend_desc,
                                     p->blend_state.GetAddressOf());
-    if (FAILED(hr)) return std::unexpected(make_d3d_error(hr));
+    if (FAILED(hr)) return std::unexpected(make_hresult_error(hr));
   }
 
   // --- 16. Create depth-stencil state (disabled) ----------------------------
@@ -653,7 +653,7 @@ auto make_glyph_renderer(d3d_device const& device, window_dimensions const& wind
 
     hr = d3d_dev->CreateDepthStencilState(&ds_desc,
                                            p->depth_state.GetAddressOf());
-    if (FAILED(hr)) return std::unexpected(make_d3d_error(hr));
+    if (FAILED(hr)) return std::unexpected(make_hresult_error(hr));
   }
 
   // --- 17. Create rasterizer state (no culling) ----------------------------
@@ -665,7 +665,7 @@ auto make_glyph_renderer(d3d_device const& device, window_dimensions const& wind
 
     hr = d3d_dev->CreateRasterizerState(&rs_desc,
                                          p->rasterizer_state.GetAddressOf());
-    if (FAILED(hr)) return std::unexpected(make_d3d_error(hr));
+    if (FAILED(hr)) return std::unexpected(make_hresult_error(hr));
   }
 
   // --- 18. Store window dimensions ------------------------------------------
@@ -694,7 +694,7 @@ auto glyph_renderer::draw(d3d_device const& device,
   HRESULT hr = context->Map(impl_->vertex_buffer.Get(), 0,
                               D3D11_MAP_WRITE_DISCARD, 0, &mapped);
   if (FAILED(hr)) {
-    return std::unexpected(make_d3d_error(hr));
+    return std::unexpected(make_hresult_error(hr));
   }
 
   auto* vertices = static_cast<glyph_vertex*>(mapped.pData);
@@ -784,7 +784,7 @@ auto glyph_renderer::draw_text(d3d_device const& device,
   HRESULT hr = context->Map(impl_->vertex_buffer.Get(), 0,
                               D3D11_MAP_WRITE_DISCARD, 0, &mapped);
   if (FAILED(hr)) {
-    return std::unexpected(make_d3d_error(hr));
+    return std::unexpected(make_hresult_error(hr));
   }
 
   auto* vertices = static_cast<glyph_vertex*>(mapped.pData);
@@ -881,7 +881,7 @@ auto glyph_renderer::draw_grid(d3d_device const& device,
   HRESULT hr = context->Map(impl_->vertex_buffer.Get(), 0,
                               D3D11_MAP_WRITE_DISCARD, 0, &mapped);
   if (FAILED(hr)) {
-    return std::unexpected(make_d3d_error(hr));
+    return std::unexpected(make_hresult_error(hr));
   }
 
   auto* vertices = static_cast<glyph_vertex*>(mapped.pData);
@@ -1005,4 +1005,33 @@ auto glyph_renderer::draw_grid(d3d_device const& device,
 
   return {};
 }
+
+// ===========================================================================
+// glyph_renderer::update_dimensions
+// ===========================================================================
+
+auto glyph_renderer::update_dimensions(d3d_device const& device,
+                                        window_dimensions const& dims) const
+    -> std::expected<void, std::error_code> {
+  auto* context = device.impl_->context.Get();
+
+  glyph_constants constants{};
+  constants.window_width   = static_cast<float>(dims.width);
+  constants.window_height  = static_cast<float>(dims.height);
+  constants.cell_width     = static_cast<float>(impl_->cell_width);
+  constants.cell_height    = static_cast<float>(impl_->cell_height);
+  constants.inv_tex_width  = 1.0f / static_cast<float>(impl_->atlas_width);
+  constants.inv_tex_height = 1.0f / static_cast<float>(impl_->atlas_height);
+  constants._pad[0] = 0.0f;
+  constants._pad[1] = 0.0f;
+
+  context->UpdateSubresource(impl_->constant_buffer.Get(), 0, nullptr,
+                              &constants, 0, 0);
+
+  impl_->window_width  = dims.width;
+  impl_->window_height = dims.height;
+
+  return {};
+}
+
 } // namespace betty::platform

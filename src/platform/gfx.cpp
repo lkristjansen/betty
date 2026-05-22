@@ -50,7 +50,7 @@ auto make_device() -> std::expected<d3d_device, std::error_code> {
   );
 
   if (FAILED(hr)) {
-    return std::unexpected(make_d3d_error(hr));
+    return std::unexpected(make_hresult_error(hr));
   }
 
   d3d_device result{ d3d_device::empty_tag{} };
@@ -72,7 +72,7 @@ d3d_swap_chain::d3d_swap_chain(empty_tag) noexcept {}
 auto d3d_swap_chain::present() const -> std::expected<void, std::error_code> {
   HRESULT hr = impl_->swap_chain->Present(1, 0);  // vsync on
   if (FAILED(hr)) {
-    return std::unexpected(make_d3d_error(hr));
+    return std::unexpected(make_hresult_error(hr));
   }
   return {};
 }
@@ -87,7 +87,7 @@ auto make_swap_chain(d3d_device const& device, win32_window const& window,
   ComPtr<IDXGIFactory2> factory;
   HRESULT hr = CreateDXGIFactory2(factory_flags, IID_PPV_ARGS(factory.GetAddressOf()));
   if (FAILED(hr)) {
-    return std::unexpected(make_d3d_error(hr));
+    return std::unexpected(make_hresult_error(hr));
   }
 
   // 2. Describe swap chain
@@ -117,7 +117,7 @@ auto make_swap_chain(d3d_device const& device, win32_window const& window,
   );
 
   if (FAILED(hr)) {
-    return std::unexpected(make_d3d_error(hr));
+    return std::unexpected(make_hresult_error(hr));
   }
 
   d3d_swap_chain result{ d3d_swap_chain::empty_tag{} };
@@ -142,14 +142,14 @@ auto make_render_target_view(d3d_device const& device, d3d_swap_chain const& swa
   ComPtr<ID3D11Texture2D> back_buffer;
   HRESULT hr = swap_chain.impl_->swap_chain->GetBuffer(0, IID_PPV_ARGS(back_buffer.GetAddressOf()));
   if (FAILED(hr)) {
-    return std::unexpected(make_d3d_error(hr));
+    return std::unexpected(make_hresult_error(hr));
   }
 
   // 2. Create render target view
   ComPtr<ID3D11RenderTargetView> rtv;
   hr = device.impl_->device->CreateRenderTargetView(back_buffer.Get(), nullptr, rtv.GetAddressOf());
   if (FAILED(hr)) {
-    return std::unexpected(make_d3d_error(hr));
+    return std::unexpected(make_hresult_error(hr));
   }
 
   d3d_render_target_view result{ d3d_render_target_view::empty_tag{} };

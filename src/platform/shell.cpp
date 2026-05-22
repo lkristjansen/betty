@@ -186,7 +186,7 @@ auto make_shell(shell_settings const& settings)
   HRESULT hr = CreatePseudoConsole(size, hInRead.get(), hOutWrite.get(), 0, &hpc_raw);
   if (FAILED(hr)) {
     FreeConsole();
-    return std::unexpected(make_win32_error(static_cast<unsigned long>(hr)));
+    return std::unexpected(make_hresult_error(hr));
   }
   scoped_conpty hpc(hpc_raw);
 
@@ -316,7 +316,7 @@ auto resize_shell(shell& sh, uint32_t cols, uint32_t rows)
   COORD size{ static_cast<SHORT>(cols), static_cast<SHORT>(rows) };
   HRESULT hr = ResizePseudoConsole(sh.impl_->hpc.get(), size);
   if (FAILED(hr))
-    return std::unexpected(make_win32_error(static_cast<unsigned long>(hr)));
+    return std::unexpected(make_hresult_error(hr));
   return {};
 }
 
