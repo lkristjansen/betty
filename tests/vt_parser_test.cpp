@@ -490,3 +490,154 @@ TEST_CASE("CSI EL — with intermediate byte", "[csi][el]") {
     CHECK(v[0].type == action_type::erase_line);
     CHECK(v[0].count == 0);
 }
+
+// ===========================================================================
+// Task 9 — OSC window title sequences
+// ===========================================================================
+
+TEST_CASE("OSC — OSC 0 with BEL terminator sets window title", "[osc][bel]") {
+    auto const v = parse_sequence("\x1B]0;hello\x07");
+    REQUIRE(v.size() == 1);
+    CHECK(v[0].type == action_type::set_window_title);
+    CHECK(v[0].title == "hello");
+}
+
+TEST_CASE("OSC — OSC 2 with ST terminator sets window title", "[osc][st]") {
+    auto const v = parse_sequence("\x1B]2;world\x1B\\");
+    REQUIRE(v.size() == 1);
+    CHECK(v[0].type == action_type::set_window_title);
+    CHECK(v[0].title == "world");
+}
+
+TEST_CASE("OSC — OSC 0 with ESC BEL terminator sets window title", "[osc][st-esc-bel-seq]") {
+    auto const v = parse_sequence("\x1B]0;pi - project\x1B\x07");
+    REQUIRE(v.size() == 1);
+    CHECK(v[0].type == action_type::set_window_title);
+    CHECK(v[0].title == "pi - project");
+}
+
+TEST_CASE("OSC — OSC 1 treated as window title", "[osc][osc1]") {
+    auto const v = parse_sequence("\x1B]1;test\x07");
+    REQUIRE(v.size() == 1);
+    CHECK(v[0].type == action_type::set_window_title);
+    CHECK(v[0].title == "test");
+}
+
+TEST_CASE("OSC — empty title ignored", "[osc][empty]") {
+    auto const v = parse_sequence("\x1B]0;\x07");
+    CHECK(v.empty());
+}
+
+TEST_CASE("OSC — missing semicolon ignored", "[osc][no-semi]") {
+    auto const v = parse_sequence("\x1B]garbage\x07");
+    CHECK(v.empty());
+}
+
+TEST_CASE("OSC — unrecognized OSC number ignored", "[osc][unknown-ps]") {
+    auto const v = parse_sequence("\x1B]4;data\x07");
+    CHECK(v.empty());
+}
+
+TEST_CASE("OSC — title truncated to 255 characters", "[osc][truncate]") {
+    std::string long_title(300, 'x');
+    std::string seq = "\x1B]0;";
+    seq += long_title;
+    seq += "\x07";
+    auto const v = parse_sequence(seq);
+    REQUIRE(v.size() == 1);
+    CHECK(v[0].type == action_type::set_window_title);
+    CHECK(v[0].title.size() == 255);
+    CHECK(v[0].title == std::string(255, 'x'));
+}
+
+TEST_CASE("OSC — UTF-8 title bytes passed through", "[osc][unicode]") {
+    // "café" = 5 bytes in UTF-8 (é = 0xC3 0xA9)
+    auto const v = parse_sequence("\x1B]0;caf\xC3\xA9\x07");
+    REQUIRE(v.size() == 1);
+    CHECK(v[0].type == action_type::set_window_title);
+    CHECK(v[0].title == "caf\xC3\xA9");
+}
+
+TEST_CASE("OSC — buffer limit 1024 bytes", "[osc][buffer-limit]") {
+    std::string huge(1100, 'y');
+    std::string seq = "\x1B]0;";
+    seq += huge;
+    seq += "\x07";
+    auto const v = parse_sequence(seq);
+    REQUIRE(v.size() == 1);
+    CHECK(v[0].type == action_type::set_window_title);
+    // Title text before BEL is truncated to 1024 bytes (minus "0;"), but
+    // then the title extraction further truncates to 255 chars.
+    CHECK(v[0].title.size() == 255);
+}
+
+TEST_CASE("OSC — ESC inside OSC not followed by backslash restarts escape", "[osc][st-esc-other]") {
+    vt_parser p;
+    // Start OSC, feed ESC, then 'x' — should discard OSC and process ESC x as unknown escape
+    CHECK(p.parse('\x1B').empty());
+    CHECK(p.parse(']').empty());
+    CHECK(p.parse('0').empty());
+    CHECK(p.parse(';').empty());
+    CHECK(p.parse('a').empty());
+    CHECK(p.parse('\x1B').empty());  // ESC inside OSC
+    // 'x' should be processed in escape state — unknown, returns to ground
+    CHECK(p.parse('x').empty());
+    // Should be back in ground
+    auto const v = p.parse('A');
+    REQUIRE(v.size() == 1);
+    CHECK(v[0].type == action_type::write_char);
+}
+
+TEST_CASE("OSC — ESC [ inside OSC starts new CSI", "[osc][st-esc-csi]") {
+    vt_parser p;
+    CHECK(p.parse('\x1B').empty());
+    CHECK(p.parse(']').empty());
+    CHECK(p.parse('g').empty());
+    CHECK(p.parse('\x1B').empty());  // ESC inside OSC
+    // '[' starts new CSI — discard OSC, enter CSI entry
+    CHECK(p.parse('[').empty());
+    auto const v = p.parse('H');     // CUP — move cursor to 0,0
+    REQUIRE(v.size() == 1);
+    CHECK(v[0].type == action_type::move_cursor);
+}
+
+TEST_CASE("OSC — ESC BEL inside OSC terminates (ECMA-48 string terminator)", "[osc][st-esc-bel]") {
+    vt_parser p;
+    // Feed OSC 0;title, then ESC then BEL — should terminate and set title
+    CHECK(p.parse('\x1B').empty());
+    CHECK(p.parse(']').empty());
+    CHECK(p.parse('2').empty());
+    CHECK(p.parse(';').empty());
+    CHECK(p.parse('t').empty());
+    CHECK(p.parse('i').empty());
+    CHECK(p.parse('t').empty());
+    CHECK(p.parse('l').empty());
+    CHECK(p.parse('e').empty());
+    CHECK(p.parse('\x1B').empty());  // ESC inside OSC → osc_esc
+    auto const v = p.parse('\x07');  // BEL → terminates OSC
+    REQUIRE(v.size() == 1);
+    CHECK(v[0].type == action_type::set_window_title);
+    CHECK(v[0].title == "title");
+}
+
+TEST_CASE("OSC — parser returns to ground after OSC", "[osc][recovery]") {
+    vt_parser p;
+    parse_sequence(p, "\x1B]0;hi\x07");
+    auto const v = p.parse('A');
+    REQUIRE(v.size() == 1);
+    CHECK(v[0].type == action_type::write_char);
+    CHECK(v[0].codepoint == 65);
+}
+
+TEST_CASE("OSC — byte-by-byte feeding", "[osc][multi-byte]") {
+    vt_parser p;
+    CHECK(p.parse('\x1B').empty());
+    CHECK(p.parse(']').empty());
+    CHECK(p.parse('0').empty());
+    CHECK(p.parse(';').empty());
+    CHECK(p.parse('x').empty());
+    auto const v = p.parse('\x07');
+    REQUIRE(v.size() == 1);
+    CHECK(v[0].type == action_type::set_window_title);
+    CHECK(v[0].title == "x");
+}

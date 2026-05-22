@@ -20,6 +20,11 @@ Application::Application(platform::win32_window window,
     , swap_chain_(std::move(swap_chain))
     , device_(std::move(device))
     , window_(std::move(window)) {
+  // Forward OSC window-title changes to the title bar.
+  grid_.set_observer([this](std::string_view title) {
+    platform::set_window_title(window_, title);
+  });
+
   if (shell_creation_failed) {
     grid_.write_bytes("Failed to create shell process.\r\n");
   }
@@ -57,6 +62,8 @@ int Application::run() {
       }
     } else if (shell_ && !platform::is_shell_running(*shell_)) {
       if (!exit_notified) {
+        // Restore default window title on shell exit.
+        platform::set_window_title(window_, "betty");
         grid_.write_bytes("[shell exited]\r\n");
         exit_notified = true;
       }

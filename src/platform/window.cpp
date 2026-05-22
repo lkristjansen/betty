@@ -252,6 +252,13 @@ auto show_error_message(std::string_view title, std::string_view message) -> voi
               MB_OK | MB_ICONERROR);
 }
 
+// --- set_window_title ------------------------------------------------------
+
+auto set_window_title(win32_window& window, std::string_view title) -> void {
+  auto const wide_title = widen(title);
+  SetWindowTextW(static_cast<HWND>(window.handle_), wide_title.c_str());
+}
+
 // --- set_key_callback / set_char_callback ----------------------------------
 
 auto set_key_callback(win32_window& window, std::function<void(vk_code, bool ctrl, bool shift, bool alt)> cb) -> void {

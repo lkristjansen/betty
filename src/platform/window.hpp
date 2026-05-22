@@ -65,6 +65,7 @@ private:
     -> std::expected<struct d3d_swap_chain, std::error_code>;
   friend auto set_key_callback(win32_window&, std::function<void(vk_code, bool ctrl, bool shift, bool alt)>) -> void;
   friend auto set_char_callback(win32_window&, std::function<void(uint32_t)>) -> void;
+  friend auto set_window_title(win32_window&, std::string_view) -> void;
 };
 
 [[nodiscard]] auto make_window(window_settings const& settings)
@@ -81,5 +82,8 @@ auto dispatch_pending_messages() -> bool;
 // Show a modal error message box.  Used for fatal startup errors so the
 // user sees a diagnostic even though the app runs with the WINDOWS subsystem.
 auto show_error_message(std::string_view title, std::string_view message) -> void;
+
+// Set the window title bar text.  Converts UTF-8 to UTF-16 internally.
+auto set_window_title(win32_window& window, std::string_view title) -> void;
 
 } // namespace betty::platform

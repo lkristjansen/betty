@@ -1,5 +1,6 @@
 #pragma once
 #include <cstdint>
+#include <functional>
 #include <span>
 #include <string_view>
 #include <vector>
@@ -80,6 +81,10 @@ public:
 
   void resize(uint32_t new_cols, uint32_t new_rows);
 
+  // --- Observer for out-of-band terminal events (e.g. OSC window title) -----
+
+  void set_observer(std::function<void(std::string_view)> on_title);
+
 private:
   uint32_t cols_;
   uint32_t rows_;
@@ -107,6 +112,9 @@ private:
 
   // EL — Erase in Line (CSI Ps K).
   void erase_line(uint32_t mode);
+
+  // Observer for out-of-band terminal events (OSC window title, etc.).
+  std::function<void(std::string_view)> on_window_title_;
 };
 
 } // namespace betty::terminal

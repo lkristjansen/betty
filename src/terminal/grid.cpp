@@ -108,6 +108,11 @@ void terminal_grid::apply(action const& a) {
   case action_type::erase_line:
     erase_line(a.count);
     break;
+  case action_type::set_window_title:
+    if (on_window_title_) {
+      on_window_title_(a.title);
+    }
+    break;
   }
 }
 
@@ -297,6 +302,14 @@ void terminal_grid::resize(uint32_t new_cols, uint32_t new_rows) {
   cols_ = new_cols;
   rows_ = new_rows;
   cells_ = std::move(new_cells);
+}
+
+// ===========================================================================
+// set_observer
+// ===========================================================================
+
+void terminal_grid::set_observer(std::function<void(std::string_view)> on_title) {
+  on_window_title_ = std::move(on_title);
 }
 
 } // namespace betty::terminal

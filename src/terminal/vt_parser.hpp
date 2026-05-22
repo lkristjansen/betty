@@ -86,6 +86,7 @@ enum class action_type : uint8_t {
   sgr_set_bg,         // set background colour
   erase_display,      // ED: clear cells in display (mode in action::count)
   erase_line,         // EL: clear cells in current line (mode in action::count)
+  set_window_title,   // OSC 0/1/2 — set window title
 };
 
 // ===========================================================================
@@ -99,6 +100,7 @@ struct action {
   uint32_t row       = 0;  // for move_cursor (absolute, 0-based)
   uint32_t col       = 0;  // for move_cursor
   rgb_color color{};       // payload for sgr_set_fg / sgr_set_bg
+  std::string title{};     // payload for set_window_title (255 chars max)
 };
 
 // ===========================================================================
@@ -117,14 +119,18 @@ private:
     csi_entry,
     csi_param,
     csi_intermediate,
+    osc,         // inside ESC ] … collecting OSC string
+    osc_esc,     // saw ESC inside OSC — waiting for \ to confirm ST
   };
 
   void reset_csi();
   auto dispatch(char final_byte) -> std::vector<action>;
+  auto dispatch_osc() -> std::vector<action>;
   auto parse_params() -> std::pair<uint32_t, uint32_t>;
 
   state state_ = state::ground;
   std::string param_buffer_;  // collects CSI parameter bytes (digits, ';')
+  std::string osc_buffer_;    // collects OSC string (max 1024 bytes)
 };
 
 } // namespace betty::terminal

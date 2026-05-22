@@ -11,6 +11,7 @@ namespace betty::terminal {
 void vt_parser::reset_csi() {
   state_ = state::ground;
   param_buffer_.clear();
+  osc_buffer_.clear();
 }
 
 // Parse the accumulated parameter buffer into two integers.
@@ -217,6 +218,41 @@ auto vt_parser::dispatch(char const final_byte) -> std::vector<action> {
 }
 
 // ===========================================================================
+// dispatch_osc — produce an action from an OSC parameter string
+// ===========================================================================
+
+auto vt_parser::dispatch_osc() -> std::vector<action> {
+  // Parse "Ps;Pt" format.
+  auto const semi = osc_buffer_.find(';');
+  if (semi == std::string::npos) return {};  // malformed — no semicolon
+
+  // Parse Ps (OSC number).
+  uint32_t ps = 0;
+  auto const ps_str = std::string_view(osc_buffer_).substr(0, semi);
+  auto [ptr, ec] = std::from_chars(ps_str.data(), ps_str.data() + ps_str.size(), ps);
+  if (ec != std::errc{}) return {};  // non-numeric Ps — ignore
+
+  // Only OSC 0, 1, 2 are handled.
+  if (ps > 2) return {};
+
+  // Extract title text (Pt).
+  std::string_view title(osc_buffer_.data() + semi + 1, osc_buffer_.size() - semi - 1);
+
+  // Ignore empty title.
+  if (title.empty()) return {};
+
+  // Truncate to 255 characters.
+  if (title.size() > 255) {
+    title = title.substr(0, 255);
+  }
+
+  return {action{
+    .type = action_type::set_window_title,
+    .title = std::string(title)
+  }};
+}
+
+// ===========================================================================
 // parse — state machine entry point
 // ===========================================================================
 
@@ -255,6 +291,11 @@ auto vt_parser::parse(unsigned char const byte) -> std::vector<action> {
       state_ = state::csi_entry;
       param_buffer_.clear();
       return {};
+    case ']': { // OSC introducer
+      state_ = state::osc;
+      osc_buffer_.clear();
+      return {};
+    }
     case '7': { // DECSC — Save Cursor
       state_ = state::ground;
       return {action{.type = action_type::save_cursor}};
@@ -319,6 +360,55 @@ auto vt_parser::parse(unsigned char const byte) -> std::vector<action> {
       reset_csi();
     }
     return {};
+
+  // -------------------------------------------------------------------
+  // OSC — inside ESC ] … collecting OSC string
+  // -------------------------------------------------------------------
+  case state::osc:
+    switch (byte) {
+    case 0x07: { // BEL — terminates OSC
+      auto result = dispatch_osc();
+      state_ = state::ground;
+      return result;
+    }
+    case 0x1B:   // ESC — might be ST
+      state_ = state::osc_esc;
+      return {};
+    default:
+      if (osc_buffer_.size() < 1024) {
+        osc_buffer_ += static_cast<char>(byte);
+      }
+      return {};
+    }
+
+  // -------------------------------------------------------------------
+  // OSC_ESC — saw ESC inside OSC, waiting for \ to confirm ST
+  // -------------------------------------------------------------------
+  case state::osc_esc:
+    switch (byte) {
+    case '\\': {  // ST — terminates OSC
+      auto result = dispatch_osc();
+      state_ = state::ground;
+      return result;
+    }
+    case 0x07: { // BEL — also terminates OSC (ESC BEL as string terminator)
+      auto result = dispatch_osc();
+      state_ = state::ground;
+      return result;
+    }
+    case '[': {  // ESC [ — start new CSI, discard OSC
+      state_ = state::csi_entry;
+      param_buffer_.clear();
+      osc_buffer_.clear();
+      return {};
+    }
+    default:
+      // Treat the prior ESC as start of a new escape sequence.
+      // Re-enter the escape state and re-process the current byte.
+      state_ = state::escape;
+      osc_buffer_.clear();
+      return parse(byte);
+    }
   }
 
   return {};
