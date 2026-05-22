@@ -38,7 +38,7 @@ Each task is a vertical slice: when completed, the user can launch `betty.exe` a
 
 ---
 
-### 5. Cursor movement sequences
+### 5. ✅ Cursor movement sequences
 **User sees:** The shell prompt appears at the correct position. Cursor-aware terminal apps position text correctly. Typing `clear` moves the cursor but doesn't yet erase anything.
 - Parse CUP, CUU, CUD, CUF, CUB, HVP
 - Save/restore cursor (DECSC/DECRC)
@@ -46,7 +46,7 @@ Each task is a vertical slice: when completed, the user can launch `betty.exe` a
 
 ---
 
-### 6. SGR colours
+### 6. ✅ SGR colours
 **User sees:** Colourful command output — `ls` listings, git diffs, syntax-highlighted prompts all render with correct Catppuccin Mocha colours. True-colour apps (e.g. `neofetch`) display correctly.
 - Parse SGR sequences for standard 16 colours, bright variants, true colour (`38;2;R;G;B`, `48;2;R;G;B`)
 - Apply Catppuccin Mocha palette for the 16 ANSI colour slots
@@ -54,7 +54,7 @@ Each task is a vertical slice: when completed, the user can launch `betty.exe` a
 
 ---
 
-### 7. Block cursor
+### 7. ✅ Block cursor
 **User sees:** A solid block cursor is visible at the current input position, rendered in reverse video (foreground/background swapped). It follows text as the user types.
 - Track cursor position on the grid
 - Render the cell at cursor position with colours inverted

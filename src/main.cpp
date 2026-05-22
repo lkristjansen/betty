@@ -158,7 +158,8 @@ int main() {
     // Render the grid
     auto const cells = grid.cells();
     if (!cells.empty()) {
-      if (auto draw_result = renderer.draw_grid(device, rtv, cells, grid.cols(), grid.rows());
+      if (auto draw_result = renderer.draw_grid(device, rtv, cells, grid.cols(), grid.rows(),
+                                                  grid.cursor_row(), grid.cursor_col());
           !draw_result) {
         log_error(draw_result.error(), "draw grid");
         exit_code = 1;

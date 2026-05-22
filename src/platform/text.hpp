@@ -43,9 +43,14 @@ struct glyph_renderer {
   // and fg/bg colours. Background quads are drawn for non-default backgrounds;
   // glyph quads are drawn with the cell's foreground colour.
   // Non-ASCII codepoints (> 127) are rendered as '?'.
+  //
+  // cursor_row / cursor_col specify which cell to render with reverse video
+  // (foreground/background swapped).  Pass values outside the visible area to
+  // suppress the cursor (it will not be drawn).
   [[nodiscard]] auto draw_grid(d3d_device const& device, d3d_render_target_view const& rtv,
                                 std::span<const terminal::grid_cell> cells,
-                                uint32_t cols, uint32_t rows) const
+                                uint32_t cols, uint32_t rows,
+                                uint32_t cursor_row, uint32_t cursor_col) const
       -> std::expected<void, std::error_code>;
 
   ~glyph_renderer();

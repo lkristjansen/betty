@@ -868,7 +868,8 @@ auto glyph_renderer::draw_text(d3d_device const& device,
 auto glyph_renderer::draw_grid(d3d_device const& device,
                                 d3d_render_target_view const& rtv,
                                 std::span<const terminal::grid_cell> cells,
-                                uint32_t cols, uint32_t rows) const
+                                uint32_t cols, uint32_t rows,
+                                uint32_t cursor_row, uint32_t cursor_col) const
   -> std::expected<void, std::error_code> {
 
   auto* context = device.impl_->context.Get();
@@ -903,11 +904,19 @@ auto glyph_renderer::draw_grid(d3d_device const& device,
     ++quad_count;
   };
 
-  // Resolve a colour: if is_default, substitute the terminal default.
   auto resolve_fg = [](terminal::rgb_color c) -> terminal::rgb_color {
     if (c.flags & 1) return terminal::k_default_fg_color;
     return c;
   };
+
+  auto resolve_bg = [](terminal::rgb_color c) -> terminal::rgb_color {
+    if (c.flags & 1) return terminal::k_default_bg_color;
+    return c;
+  };
+
+  // Only draw the cursor if it lies within the visible area.
+  bool const cursor_visible =
+      cursor_row < draw_rows && cursor_col < draw_cols;
 
   for (uint32_t row = 0; row < draw_rows; ++row) {
     float const y0 = static_cast<float>(row * impl_->cell_height);
@@ -922,31 +931,60 @@ auto glyph_renderer::draw_grid(d3d_device const& device,
       float const x0 = static_cast<float>(col * impl_->cell_width);
       float const x1 = x0 + static_cast<float>(impl_->cell_width);
 
-      // Background quad — only if the cell has an explicit (non-default) bg.
-      if (!(cell.bg.flags & 1)) {
-        auto const& bg = cell.bg;
-        float const nr = static_cast<float>(bg.r) / 255.0f;
-        float const ng = static_cast<float>(bg.g) / 255.0f;
-        float const nb = static_cast<float>(bg.b) / 255.0f;
-        // Negative u signals the pixel shader to skip atlas sampling.
-        emit_quad(x0, y0, x1, y1, -1.0f, 0.0f, -1.0f, 0.0f, nr, ng, nb);
-      }
+      bool const is_cursor =
+        cursor_visible && row == cursor_row && col == cursor_col;
 
-      // Foreground glyph — only if the cell is not a space.
-      char32_t const cp = cell.codepoint;
-      if (cp != U' ' && cp != 0) {
-        unsigned char glyph =
-          (cp <= 127) ? static_cast<unsigned char>(cp)
-                        : static_cast<unsigned char>('?');
-
-        auto& slot = impl_->glyph_slots[glyph];
+      if (is_cursor) {
+        // Reverse video: bg quad in fg colour, glyph in bg colour.
         auto const fg = resolve_fg(cell.fg);
+        auto const bg = resolve_bg(cell.bg);
+
+        // Always draw the block — fg colour fills the cell.
         float const nr = static_cast<float>(fg.r) / 255.0f;
         float const ng = static_cast<float>(fg.g) / 255.0f;
         float const nb = static_cast<float>(fg.b) / 255.0f;
+        emit_quad(x0, y0, x1, y1, -1.0f, 0.0f, -1.0f, 0.0f, nr, ng, nb);
 
-        emit_quad(x0, y0, x1, y1, slot.u0, slot.v0, slot.u1, slot.v1,
-                   nr, ng, nb);
+        // If the cell has a character, draw it in the bg colour.
+        char32_t const cp = cell.codepoint;
+        if (cp != U' ' && cp != 0) {
+          unsigned char glyph =
+            (cp <= 127) ? static_cast<unsigned char>(cp)
+                          : static_cast<unsigned char>('?');
+          auto& slot = impl_->glyph_slots[glyph];
+          float const cr = static_cast<float>(bg.r) / 255.0f;
+          float const cg = static_cast<float>(bg.g) / 255.0f;
+          float const cb = static_cast<float>(bg.b) / 255.0f;
+          emit_quad(x0, y0, x1, y1, slot.u0, slot.v0, slot.u1, slot.v1,
+                     cr, cg, cb);
+        }
+      } else {
+        // Background quad — only if the cell has an explicit (non-default) bg.
+        if (!(cell.bg.flags & 1)) {
+          auto const& bg = cell.bg;
+          float const nr = static_cast<float>(bg.r) / 255.0f;
+          float const ng = static_cast<float>(bg.g) / 255.0f;
+          float const nb = static_cast<float>(bg.b) / 255.0f;
+          // Negative u signals the pixel shader to skip atlas sampling.
+          emit_quad(x0, y0, x1, y1, -1.0f, 0.0f, -1.0f, 0.0f, nr, ng, nb);
+        }
+
+        // Foreground glyph — only if the cell is not a space.
+        char32_t const cp = cell.codepoint;
+        if (cp != U' ' && cp != 0) {
+          unsigned char glyph =
+            (cp <= 127) ? static_cast<unsigned char>(cp)
+                          : static_cast<unsigned char>('?');
+
+          auto& slot = impl_->glyph_slots[glyph];
+          auto const fg = resolve_fg(cell.fg);
+          float const nr = static_cast<float>(fg.r) / 255.0f;
+          float const ng = static_cast<float>(fg.g) / 255.0f;
+          float const nb = static_cast<float>(fg.b) / 255.0f;
+
+          emit_quad(x0, y0, x1, y1, slot.u0, slot.v0, slot.u1, slot.v1,
+                     nr, ng, nb);
+        }
       }
     }
   }
