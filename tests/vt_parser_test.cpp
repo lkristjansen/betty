@@ -902,3 +902,110 @@ TEST_CASE("CSI ICH/DCH/ECH — parser returns to ground", "[csi][task14][recover
     REQUIRE(v3.size() == 1);
     CHECK(v3[0].type == action_type::write_char);
 }
+
+// ===========================================================================
+// Task 15 — UTF-8 decoding
+// ===========================================================================
+
+// Helper: feed bytes and collect ALL actions (not just the last one).
+static auto parse_sequence_all(vt_parser& p, std::string_view bytes)
+    -> std::vector<action>
+{
+    std::vector<action> result;
+    for (auto const b : bytes) {
+        auto v = p.parse(static_cast<unsigned char>(b));
+        for (auto& a : v) result.push_back(std::move(a));
+    }
+    return result;
+}
+
+static auto parse_sequence_all(std::string_view bytes)
+    -> std::vector<action>
+{
+    vt_parser p;
+    return parse_sequence_all(p, bytes);
+}
+
+TEST_CASE("UTF-8 — 2-byte sequence (U+00E9 é)", "[task15][utf8]") {
+    auto const v = parse_sequence("\xC3\xA9");
+    REQUIRE(v.size() == 1);
+    CHECK(v[0].type == action_type::write_char);
+    CHECK(v[0].codepoint == 0x00E9);
+}
+
+TEST_CASE("UTF-8 — 3-byte sequence (U+4E2D 中)", "[task15][utf8]") {
+    auto const v = parse_sequence("\xE4\xB8\xAD");
+    REQUIRE(v.size() == 1);
+    CHECK(v[0].type == action_type::write_char);
+    CHECK(v[0].codepoint == 0x4E2D);
+}
+
+TEST_CASE("UTF-8 — 4-byte sequence (U+1F600 😀)", "[task15][utf8]") {
+    auto const v = parse_sequence("\xF0\x9F\x98\x80");
+    REQUIRE(v.size() == 1);
+    CHECK(v[0].type == action_type::write_char);
+    CHECK(v[0].codepoint == 0x1F600);
+}
+
+TEST_CASE("UTF-8 — mixed ASCII and multi-byte", "[task15][utf8]") {
+    // "A" + U+4E2D + "B"
+    auto const v = parse_sequence_all("A\xE4\xB8\xAD" "B");
+    REQUIRE(v.size() == 3);
+    CHECK(v[0].type == action_type::write_char);
+    CHECK(v[0].codepoint == U'A');
+    CHECK(v[1].type == action_type::write_char);
+    CHECK(v[1].codepoint == 0x4E2D);
+    CHECK(v[2].type == action_type::write_char);
+    CHECK(v[2].codepoint == U'B');
+}
+
+TEST_CASE("UTF-8 — invalid byte (0xFF) emits replacement char", "[task15][utf8]") {
+    // 0xFF is not a valid UTF-8 start byte, ignored (no action).
+    vt_parser p;
+    auto v = p.parse(0xFF);
+    CHECK(v.empty());
+}
+
+TEST_CASE("UTF-8 — overlong encoding is rejected", "[task15][utf8]") {
+    // 0xC0 0x80 is overlong for NUL. First byte starts 2-byte;
+    // after completion the codepoint is 0 which is < 0x80 => invalid.
+    auto const v = parse_sequence("\xC0\x80");
+    REQUIRE(v.size() == 1);
+    CHECK(v[0].type == action_type::write_char);
+    CHECK(v[0].codepoint == 0xFFFD);
+}
+
+TEST_CASE("UTF-8 — stray continuation byte is ignored", "[task15][utf8]") {
+    // 0x80 is a continuation byte without a start byte → ignored.
+    auto const v = parse_sequence_all("A\x80" "B");
+    REQUIRE(v.size() == 2);
+    CHECK(v[0].codepoint == U'A');
+    CHECK(v[1].codepoint == U'B');
+}
+
+TEST_CASE("UTF-8 — truncated sequence aborted by ESC", "[task15][utf8]") {
+    // 0xE4 starts 3-byte seq; 0x1B (ESC) aborts it.
+    vt_parser p;
+    p.parse(0xE4);
+    auto const v = p.parse(0x1B);
+    // ESC puts parser in escape state; no write_char for broken UTF-8.
+    for (auto const& a : v) {
+        CHECK(a.type != action_type::write_char);
+    }
+}
+
+TEST_CASE("UTF-8 — surrogate codepoint is rejected", "[task15][utf8]") {
+    // U+D800 encoded in UTF-8: 0xED 0xA0 0x80
+    auto const v = parse_sequence("\xED\xA0\x80");
+    REQUIRE(v.size() == 1);
+    CHECK(v[0].type == action_type::write_char);
+    CHECK(v[0].codepoint == 0xFFFD);
+}
+
+TEST_CASE("UTF-8 — codepoint above U+10FFFF is rejected", "[task15][utf8]") {
+    // 0xF4 0x90 0x80 0x80 → U+110000 (beyond max)
+    auto const v = parse_sequence("\xF4\x90\x80\x80");
+    REQUIRE(v.size() == 1);
+    CHECK(v[0].type == action_type::write_char);
+    CHECK(v[0].codepoint == 0xFFFD);
+}

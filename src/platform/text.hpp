@@ -45,10 +45,16 @@ struct glyph_renderer {
                                 std::span<std::string_view const> lines,
                                 uint32_t start_row) const -> std::expected<void, std::error_code>;
 
+  // Pre-rasterize any non-ASCII glyphs in `cells` that aren't already cached.
+  // Must be called once per frame before draw_grid().
+  void prepare_unicode_glyphs(d3d_device const& device,
+                              std::span<const render_cell> cells) const;
+
   // Draw a terminal grid. `cells` is a row-major flat array of `dims.height`
   // rows × `dims.width` cols. Each render_cell carries a resolved codepoint
   // and fg/bg colours. Background quads are always emitted.
-  // Non-ASCII codepoints (> 127) are rendered as '?'.
+  // Non-ASCII codepoints are rendered from the dynamic glyph cache
+  // (populated by prepare_unicode_glyphs).  Wide characters span 2 cells.
   //
   // `cursor` specifies which cell to render with reverse video
   // (foreground/background swapped).  Pass values outside the visible area to
@@ -70,6 +76,11 @@ private:
 
   struct impl;
   std::unique_ptr<impl> impl_;
+
+  // Ensure a non-ASCII glyph is in the dynamic atlas cache, rasterizing if needed.
+  // Returns the slot index or SIZE_MAX on failure.
+  [[nodiscard]] auto ensure_glyph_cached(char32_t cp, struct d3d_device const& device) const
+      -> uint32_t;
 
   friend auto make_glyph_renderer(d3d_device const&, window_dimensions const&)
     -> std::expected<glyph_renderer, std::error_code>;

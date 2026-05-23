@@ -402,7 +402,7 @@ auto vt_parser::parse(unsigned char const byte) -> std::vector<action> {
   switch (state_) {
 
   // -------------------------------------------------------------------
-  // GROUND — normal text
+  // GROUND — normal text (including UTF-8 multi-byte start)
   // -------------------------------------------------------------------
   case state::ground:
     switch (byte) {
@@ -414,15 +414,79 @@ auto vt_parser::parse(unsigned char const byte) -> std::vector<action> {
       state_ = state::escape;
       return {};
     default:
-      if (byte >= 0x20) {
-        return {action{
-          .type = action_type::write_char,
-          .codepoint = static_cast<char32_t>(byte)
-        }};
+      if (byte < 0x80) {
+        // ASCII: printable (0x20–0x7E) or C0 control (ignore).
+        if (byte >= 0x20) {
+          return {action{
+            .type = action_type::write_char,
+            .codepoint = static_cast<char32_t>(byte)
+          }};
+        }
+        return {};
       }
-      // Other C0 controls are silently ignored.
+      // byte >= 0x80 — UTF-8 multi-byte start
+      if (byte >= 0xC0 && byte <= 0xF4) {
+        // Determine expected sequence length.
+        if (byte <= 0xDF) {
+          utf8_.remaining = 1;
+          utf8_.codepoint = byte & 0x1Fu;
+        } else if (byte <= 0xEF) {
+          utf8_.remaining = 2;
+          utf8_.codepoint = byte & 0x0Fu;
+        } else {
+          utf8_.remaining = 3;
+          utf8_.codepoint = byte & 0x07u;
+        }
+        state_ = state::utf8_accum;
+        return {};
+      }
+      // Stray continuation byte (0x80–0xBF) or invalid (0xF5–0xFF) —
+      // silently ignore (don't emit anything).
       return {};
     }
+
+  // -------------------------------------------------------------------
+  // UTF8_ACCUM — accumulating continuation bytes
+  // -------------------------------------------------------------------
+  case state::utf8_accum:
+    // Control characters abort the UTF-8 sequence and are re-processed.
+    if (byte < 0x20 || byte == 0x7F || byte == 0x1B) {
+      state_ = state::ground;
+      return parse(byte);
+    }
+    // Continuation bytes must be 0x80–0xBF.
+    if ((byte & 0xC0u) != 0x80u) {
+      // Invalid — abort sequence and emit replacement character.
+      state_ = state::ground;
+      return {action{
+        .type = action_type::write_char,
+        .codepoint = 0xFFFDu
+      }};
+    }
+    utf8_.codepoint = (utf8_.codepoint << 6) | (byte & 0x3Fu);
+    utf8_.remaining--;
+    if (utf8_.remaining == 0) {
+      state_ = state::ground;
+      // Validate the decoded codepoint.
+      char32_t const cp = utf8_.codepoint;
+      // Reject surrogates (U+D800–U+DFFF).
+      if (cp >= 0xD800 && cp <= 0xDFFF) {
+        return {action{.type = action_type::write_char, .codepoint = 0xFFFDu}};
+      }
+      // Reject overlong 2-byte sequences (codepoint < 0x80).
+      if (cp < 0x80) {
+        return {action{.type = action_type::write_char, .codepoint = 0xFFFDu}};
+      }
+      // Reject codepoints beyond Unicode range.
+      if (cp > 0x10FFFF) {
+        return {action{.type = action_type::write_char, .codepoint = 0xFFFDu}};
+      }
+      return {action{
+        .type = action_type::write_char,
+        .codepoint = cp
+      }};
+    }
+    return {};
 
   // -------------------------------------------------------------------
   // ESCAPE — just saw ESC

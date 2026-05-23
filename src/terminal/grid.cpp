@@ -1,4 +1,6 @@
 #include "grid.hpp"
+#include "wcwidth.hpp"
+#include "platform/unicode.hpp"
 #include <algorithm>
 #include <cassert>
 #include <cstring>
@@ -30,29 +32,122 @@ auto terminal_grid::physical_index(uint32_t logical_row) const -> uint32_t {
 // ===========================================================================
 
 void terminal_grid::write_char(char32_t cp) {
-  if (cursor_col_ < cols_ && rows_ > 0) {
-    uint32_t const logical = scrollback_count_ + cursor_row_;
-    uint32_t const phys = physical_index(logical);
-    auto& cell = cells_[static_cast<size_t>(phys) * cols_ + cursor_col_];
-    cell.codepoint = cp;
-    cell.fg = current_fg_;
-    cell.bg = current_bg_;
-    cell.attr = current_attr_;
+  int const w = wcwidth(cp);
+
+  if (w == 0) {
+    write_combining_char(cp);
+    return;
   }
 
-  cursor_col_++;
+  if (w < 0) {
+    // Control character — silently ignore.
+    return;
+  }
+
+  if (w == 2) {
+    // Wide character — needs 2 cells.
+    // If at or past the second-to-last column, wrap to next line first.
+    if (cursor_col_ >= cols_ - 1 && cols_ > 0) {
+      newline();
+    }
+
+    // Write the actual glyph to the first cell.
+    if (cursor_col_ < cols_ && rows_ > 0) {
+      write_cell(cursor_col_, cp, current_fg_, current_bg_,
+                 current_attr_ | cell_attr::wide);
+    }
+    cursor_col_++;
+
+    // Mark the continuation cell.
+    if (cursor_col_ < cols_ && rows_ > 0) {
+      write_cell(cursor_col_, U' ', current_fg_, current_bg_,
+                 current_attr_ | cell_attr::wide_tail);
+    }
+    cursor_col_++;
+  } else {
+    // Normal width-1 character.
+    if (cursor_col_ < cols_ && rows_ > 0) {
+      write_cell(cursor_col_, cp, current_fg_, current_bg_, current_attr_);
+    }
+    cursor_col_++;
+  }
 
   // Auto-wrap: if cursor is past the last column, move to next row.
   if (cursor_col_ >= cols_) {
     cursor_col_ = 0;
 
-    // Scroll if at the bottom margin of the scroll region.
     if (cursor_row_ >= scroll_bottom_) {
       scroll_up();
-      // cursor stays at scroll_bottom_
     } else {
       cursor_row_++;
     }
+  }
+}
+
+// ===========================================================================
+// write_cell — set a single cell at (cursor_row_, col)
+// ===========================================================================
+
+void terminal_grid::write_cell(uint32_t col, char32_t cp,
+                                rgb_color fg, rgb_color bg, cell_attr attr) {
+  uint32_t const logical = scrollback_count_ + cursor_row_;
+  uint32_t const phys = physical_index(logical);
+  auto& cell = cells_[static_cast<size_t>(phys) * cols_ + col];
+  cell.codepoint = cp;
+  cell.fg = fg;
+  cell.bg = bg;
+  cell.attr = attr;
+}
+
+// ===========================================================================
+// write_combining_char — NFC pre-composition for zero-width marks
+// ===========================================================================
+
+void terminal_grid::write_combining_char(char32_t cp) {
+  // If at column 0, can't compose with anything.
+  if (cursor_col_ == 0) {
+    if (rows_ > 0) {
+      write_cell(cursor_col_, cp, current_fg_, current_bg_, current_attr_);
+    }
+    cursor_col_++;
+    return;
+  }
+
+  // Look at the previous cell.
+  uint32_t const logical = scrollback_count_ + cursor_row_;
+  uint32_t const phys = physical_index(logical);
+  auto& prev_cell = cells_[static_cast<size_t>(phys) * cols_ + cursor_col_ - 1];
+
+  // Don't compose onto wide_tail cells.
+  if ((static_cast<uint8_t>(prev_cell.attr) & static_cast<uint8_t>(cell_attr::wide_tail)) != 0) {
+    if (rows_ > 0) {
+      write_cell(cursor_col_, cp, current_fg_, current_bg_, current_attr_);
+    }
+    cursor_col_++;
+    return;
+  }
+
+  char32_t const base = prev_cell.codepoint;
+  if (base == U' ' || base == 0) {
+    // Empty cell — write combining char as width 1.
+    if (rows_ > 0) {
+      write_cell(cursor_col_, cp, current_fg_, current_bg_, current_attr_);
+    }
+    cursor_col_++;
+    return;
+  }
+
+  // Attempt NFC composition via the platform helper.
+  char32_t const composed = platform::nfc_compose(base, cp);
+  if (composed != 0) {
+    prev_cell.codepoint = composed;
+    // Cursor does not advance (combining char is zero-width).
+  } else {
+    // Uncomposable — fallback to width 1.
+    if (rows_ > 0) {
+      write_cell(cursor_col_, cp, current_fg_, current_bg_, current_attr_);
+    }
+    cursor_col_++;
   }
 }
 

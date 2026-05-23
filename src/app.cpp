@@ -155,6 +155,8 @@ int Application::run() {
     // Render the grid
     auto const cells = grid_.render_cells();
     if (!cells.empty()) {
+      renderer_.prepare_unicode_glyphs(device_, cells);
+
       platform::size2d const dims{grid_.cols(), grid_.rows()};
       // Suppress cursor when scrolled back (pass out-of-bounds position).
       platform::point2d const cursor{

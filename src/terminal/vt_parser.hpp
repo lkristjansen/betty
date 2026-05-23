@@ -19,6 +19,8 @@ enum class cell_attr : uint8_t {
   underline     = 1 << 3,
   strikethrough = 1 << 4,
   reverse       = 1 << 5,
+  wide          = 1 << 6,  // first cell of a 2-cell-wide character
+  wide_tail     = 1 << 7,  // continuation cell (right half of wide char)
 };
 
 inline constexpr auto operator|(cell_attr a, cell_attr b) -> cell_attr {
@@ -152,6 +154,7 @@ public:
 private:
   enum class state : uint8_t {
     ground,
+    utf8_accum,  // accumulating UTF-8 multi-byte sequence
     escape,
     csi_entry,
     csi_param,
@@ -168,6 +171,12 @@ private:
   state state_ = state::ground;
   std::string param_buffer_;  // collects CSI parameter bytes (digits, ';')
   std::string osc_buffer_;    // collects OSC string (max 1024 bytes)
+
+  // UTF-8 accumulation state.
+  struct {
+    char32_t codepoint = 0;
+    uint8_t  remaining = 0;  // expected continuation bytes
+  } utf8_;
 };
 
 } // namespace betty::terminal

@@ -1,7 +1,13 @@
 #include <catch2/catch_test_macros.hpp>
 #include "terminal/grid.hpp"
+#include "terminal/wcwidth.hpp"
 
 using namespace betty::terminal;
+
+// Helper: check if a cell has a given attribute flag.
+static bool has_attr(cell_attr val, cell_attr flag) {
+    return (static_cast<uint8_t>(val) & static_cast<uint8_t>(flag)) != 0;
+}
 
 // ===========================================================================
 // Construction and basic properties
@@ -1728,4 +1734,158 @@ TEST_CASE("Grid — ECH cursor unchanged", "[grid][task14][ech]") {
 
     CHECK(g.cursor_col() == 3);
     CHECK(g.cursor_row() == 2);
+}
+
+// ===========================================================================
+// Task 15 — Wide characters
+// ===========================================================================
+
+TEST_CASE("Grid — wide char occupies two cells", "[grid][task15][wide]") {
+    terminal_grid g(10, 5);
+    g.write_char(0x4E2D);  // 中 (CJK, width 2)
+    // Cell (0,0) = 中 with wide attr
+    CHECK(g.cell(0, 0).codepoint == 0x4E2D);
+    CHECK(has_attr(g.cell(0, 0).attr, cell_attr::wide));
+    // Cell (0,1) = continuation
+    CHECK(has_attr(g.cell(0, 1).attr, cell_attr::wide_tail));
+    // Cursor at column 2
+    CHECK(g.cursor_col() == 2);
+    CHECK(g.cursor_row() == 0);
+}
+
+TEST_CASE("Grid — wide char at last column wraps", "[grid][task15][wide]") {
+    // 5-column grid, fill first 4 cols, then write wide char at col 4
+    // (col 4 is last column) → should wrap to row 1, cols 0-1
+    terminal_grid g(5, 5);
+    g.write_char(U'A'); g.write_char(U'A'); g.write_char(U'A'); g.write_char(U'A');
+    CHECK(g.cursor_col() == 4);
+    CHECK(g.cursor_row() == 0);
+
+    g.write_char(0x4E2D);  // wide char at last column → wrap
+    CHECK(g.cursor_row() == 1);
+    CHECK(g.cursor_col() == 2);  // wide char at cols 0-1, cursor now at 2
+    CHECK(g.cell(1, 0).codepoint == 0x4E2D);
+    CHECK(has_attr(g.cell(1, 0).attr, cell_attr::wide));
+    CHECK(has_attr(g.cell(1, 1).attr, cell_attr::wide_tail));
+}
+
+TEST_CASE("Grid — wide char at second-to-last column fits", "[grid][task15][wide]") {
+    // 5-column grid, fill 3 cols, wide char at col 3 (second-to-last) → fits
+    terminal_grid g(5, 5);
+    g.write_char(U'A'); g.write_char(U'A'); g.write_char(U'A');  // cols 0-2
+    CHECK(g.cursor_col() == 3);
+
+    g.write_char(0x4E2D);  // wide char at col 3, fits at cols 3-4
+    CHECK(g.cell(0, 3).codepoint == 0x4E2D);
+    CHECK(has_attr(g.cell(0, 3).attr, cell_attr::wide));
+    CHECK(has_attr(g.cell(0, 4).attr, cell_attr::wide_tail));
+    // After writing 2 cells, cursor goes to col 5 which auto-wraps to row 1.
+    CHECK(g.cursor_row() == 1);
+    CHECK(g.cursor_col() == 0);
+}
+
+TEST_CASE("Grid — normal char after wide char placed correctly", "[grid][task15][wide]") {
+    terminal_grid g(10, 5);
+    g.write_char(0x4E2D);  // wide, cols 0-1
+    g.write_char(U'A');    // col 2
+    CHECK(g.cell(0, 2).codepoint == U'A');
+    CHECK(g.cursor_col() == 3);
+}
+
+TEST_CASE("Grid — render_cells marks wide and continuation", "[grid][task15][wide]") {
+    terminal_grid g(10, 5);
+    g.write_char(0x4E2D);
+    auto cells = g.render_cells();
+    // Cell 0: codepoint = 0x4E2D, attr has wide flag
+    CHECK(cells[0].codepoint == 0x4E2D);
+    CHECK((cells[0].attr & (1u << 6)) != 0);  // k_attr_wide
+    // Cell 1: continuation, attr has wide_tail flag
+    CHECK((cells[1].attr & (1u << 7)) != 0);  // k_attr_wide_tail
+}
+
+TEST_CASE("Grid — wide char fg/bg colours propagated to both cells", "[grid][task15][wide]") {
+    terminal_grid g(10, 5);
+    // Set red fg via SGR then write a wide char.
+    g.write_bytes("\x1B[31m");  // red fg
+    g.write_char(0x4E2D);
+    // Both cells should have the same fg.
+    CHECK(g.cell(0, 0).fg.r == g.cell(0, 1).fg.r);
+    CHECK(g.cell(0, 0).fg.g == g.cell(0, 1).fg.g);
+    CHECK(g.cell(0, 0).fg.b == g.cell(0, 1).fg.b);
+}
+
+// ===========================================================================
+// Task 15 — Combining characters (NFC pre-composition)
+// ===========================================================================
+
+TEST_CASE("Grid — combining acute after 'e' composes to é", "[grid][task15][combining]") {
+    terminal_grid g(10, 5);
+    g.write_char(U'e');
+    g.write_char(0x0301);  // combining acute accent
+    // Cursor stays at col 1 (combining char is zero-width)
+    CHECK(g.cursor_col() == 1);
+    // Cell (0,0) should now be é (U+00E9)
+    CHECK(g.cell(0, 0).codepoint == 0x00E9);
+}
+
+TEST_CASE("Grid — combining char at column 0 is width 1", "[grid][task15][combining]") {
+    terminal_grid g(10, 5);
+    g.write_char(0x0301);  // combining acute at col 0
+    CHECK(g.cursor_col() == 1);  // treated as width 1
+    CHECK(g.cell(0, 0).codepoint == 0x0301);
+}
+
+TEST_CASE("Grid — combining char after space is width 1", "[grid][task15][combining]") {
+    terminal_grid g(10, 5);
+    g.write_char(U' ');  // space
+    g.write_char(0x0301);  // combining acute
+    CHECK(g.cursor_col() == 2);  // treated as width 1
+    CHECK(g.cell(0, 1).codepoint == 0x0301);
+}
+
+TEST_CASE("Grid — combining char after wide_tail is width 1", "[grid][task15][combining]") {
+    terminal_grid g(10, 5);
+    g.write_char(0x4E2D);  // wide, cols 0-1; col 1 is wide_tail
+    // Write combining at col 2 (advances from col 2 normally).
+    g.write_char(0x0301);
+    // Should be width 1 at col 2 (not composed with wide_tail at col 1).
+    CHECK(g.cursor_col() == 3);
+    CHECK(g.cell(0, 2).codepoint == 0x0301);
+}
+
+// ===========================================================================
+// Task 15 — wcwidth unit tests
+// ===========================================================================
+
+TEST_CASE("wcwidth — ASCII returns 1", "[task15][wcwidth]") {
+    CHECK(wcwidth(U'A') == 1);
+    CHECK(wcwidth(U' ') == 1);
+    CHECK(wcwidth(U'0') == 1);
+}
+
+TEST_CASE("wcwidth — CJK returns 2", "[task15][wcwidth]") {
+    CHECK(wcwidth(0x4E2D) == 2);  // 中
+    CHECK(wcwidth(0x6587) == 2);  // 文
+    CHECK(wcwidth(0x3042) == 2);  // あ (Hiragana)
+    CHECK(wcwidth(0xAC00) == 2);  // 가 (Hangul)
+}
+
+TEST_CASE("wcwidth — fullwidth returns 2", "[task15][wcwidth]") {
+    CHECK(wcwidth(0xFF01) == 2);  // ！ fullwidth exclamation
+    CHECK(wcwidth(0xFF21) == 2);  // Ａ fullwidth A
+}
+
+TEST_CASE("wcwidth — combining returns 0", "[task15][wcwidth]") {
+    CHECK(wcwidth(0x0301) == 0);  // combining acute
+    CHECK(wcwidth(0x0300) == 0);  // combining grave
+}
+
+TEST_CASE("wcwidth — control returns -1", "[task15][wcwidth]") {
+    CHECK(wcwidth(0x0000) == -1);
+    CHECK(wcwidth(0x001F) == -1);
+    CHECK(wcwidth(0x007F) == -1);
+}
+
+TEST_CASE("wcwidth — emoji returns 2", "[task15][wcwidth]") {
+    CHECK(wcwidth(0x1F600) == 2);  // 😀
 }

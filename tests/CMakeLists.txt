@@ -6,6 +6,7 @@ add_executable(betty_tests
 
 target_link_libraries(betty_tests PRIVATE
     terminal
+    platform
     Catch2::Catch2WithMain
 )
 

@@ -44,7 +44,8 @@ public:
   // --- Write operations -----------------------------------------------------
 
   // Write a single printable codepoint at the cursor, then advance.
-  // Handles auto-wrap at column boundary and scroll at bottom row.
+  // Handles wide characters (2 cells), combining characters (NFC pre-composition),
+  // auto-wrap at column boundary, and scroll at bottom row.
   void write_char(char32_t cp);
 
   // Process a sequence of raw bytes (VT-stripped shell output).
@@ -195,6 +196,15 @@ private:
 
   // Observer for out-of-band terminal events (OSC window title, etc.).
   std::function<void(std::string_view)> on_window_title_;
+
+  // --- Private Unicode helpers --------------------------------------------
+
+  // Write a single cell at (cursor_row_, col) with the given properties.
+  void write_cell(uint32_t col, char32_t cp, rgb_color fg, rgb_color bg, cell_attr attr);
+
+  // Handle a zero-width combining character (wcwidth == 0).
+  // Attempts NFC pre-composition with the previous cell; falls back to width 1.
+  void write_combining_char(char32_t cp);
 };
 
 } // namespace betty::terminal

@@ -13,6 +13,7 @@
 #include <cstdint>
 #include <memory>
 #include <span>
+#include <unordered_map>
 #include <vector>
 
 using Microsoft::WRL::ComPtr;
@@ -106,6 +107,7 @@ VS_OUTPUT main(VS_INPUT input) {
 
 const char* k_pixel_shader_src = R"(
 Texture2D<float4> glyph_atlas : register(t0);
+Texture2D<float4> dyn_atlas   : register(t1);
 SamplerState linear_sampler  : register(s0);
 
 struct VS_OUTPUT {
@@ -119,7 +121,13 @@ float4 main(VS_OUTPUT input) : SV_TARGET {
     // Background quad: solid colour (no texture sample).
     return float4(input.color, 1.0);
   }
-  // Foreground glyph: multiply atlas alpha by vertex colour.
+  if (input.uv.x >= 1.0) {
+    // Dynamic atlas: UV is stored as (real_u + 2.0, real_v).
+    float2 real_uv = float2(input.uv.x - 2.0, input.uv.y);
+    float alpha = dyn_atlas.Sample(linear_sampler, real_uv).a;
+    return float4(input.color * alpha, alpha);
+  }
+  // ASCII atlas.
   float alpha = glyph_atlas.Sample(linear_sampler, input.uv).a;
   return float4(input.color * alpha, alpha);
 }
@@ -151,6 +159,26 @@ struct glyph_renderer::impl {
   uint32_t slot_width   = 0;
   uint32_t slot_height  = 0;
   std::array<glyph_slot, k_atlas_glyphs> glyph_slots{};
+
+  // ── Dynamic glyph atlas for non-ASCII codepoints ─────────────────────
+  static constexpr uint32_t k_dyn_atlas_cols = 32;
+  static constexpr uint32_t k_dyn_atlas_rows = 32;
+  static constexpr uint32_t k_dyn_max_glyphs = k_dyn_atlas_cols * k_dyn_atlas_rows;
+
+  ComPtr<ID3D11Texture2D>          dyn_atlas_texture;
+  ComPtr<ID3D11ShaderResourceView> dyn_atlas_srv;
+  uint32_t dyn_atlas_width  = 0;
+  uint32_t dyn_atlas_height = 0;
+  // UV data per dynamic slot.
+  std::array<glyph_slot, k_dyn_max_glyphs> dyn_glyph_slots{};
+
+  // Hash map: codepoint → slot index.
+  mutable std::unordered_map<char32_t, uint32_t> dyn_index_;
+  // LRU: last-access generation counter per slot.
+  mutable std::array<uint64_t, k_dyn_max_glyphs> dyn_access_{};
+  mutable uint64_t dyn_clock_ = 0;
+  // Next free slot (fills sequentially until full, then LRU eviction).
+  mutable uint32_t dyn_next_ = 0;
 
   // D3D pipeline state
   ComPtr<ID3D11VertexShader>  vertex_shader;
@@ -563,6 +591,62 @@ auto make_glyph_renderer(d3d_device const& device, window_dimensions const& wind
                                 p->atlas_width * 4, 0);
   }
 
+  // --- 7b. Create dynamic atlas texture (non-ASCII glyphs) -------------------
+  {
+    p->dyn_atlas_width  = p->k_dyn_atlas_cols * p->slot_width;
+    p->dyn_atlas_height = p->k_dyn_atlas_rows * p->slot_height;
+
+    D3D11_TEXTURE2D_DESC dyn_tex_desc{};
+    dyn_tex_desc.Width            = p->dyn_atlas_width;
+    dyn_tex_desc.Height           = p->dyn_atlas_height;
+    dyn_tex_desc.MipLevels        = 1;
+    dyn_tex_desc.ArraySize        = 1;
+    dyn_tex_desc.Format           = DXGI_FORMAT_R8G8B8A8_UNORM;
+    dyn_tex_desc.SampleDesc.Count = 1;
+    dyn_tex_desc.Usage            = D3D11_USAGE_DEFAULT;
+    dyn_tex_desc.BindFlags        = D3D11_BIND_SHADER_RESOURCE;
+
+    hr = d3d_dev->CreateTexture2D(&dyn_tex_desc, nullptr,
+                                   p->dyn_atlas_texture.GetAddressOf());
+    if (FAILED(hr)) return std::unexpected(make_hresult_error(hr));
+
+    // Create SRV for dynamic atlas.
+    D3D11_SHADER_RESOURCE_VIEW_DESC dyn_srv_desc{};
+    dyn_srv_desc.Format                    = DXGI_FORMAT_R8G8B8A8_UNORM;
+    dyn_srv_desc.ViewDimension             = D3D11_SRV_DIMENSION_TEXTURE2D;
+    dyn_srv_desc.Texture2D.MipLevels       = 1;
+    dyn_srv_desc.Texture2D.MostDetailedMip = 0;
+
+    hr = d3d_dev->CreateShaderResourceView(p->dyn_atlas_texture.Get(), &dyn_srv_desc,
+                                            p->dyn_atlas_srv.GetAddressOf());
+    if (FAILED(hr)) return std::unexpected(make_hresult_error(hr));
+
+    // Clear to transparent.
+    {
+      size_t const dyn_pixels = static_cast<size_t>(p->dyn_atlas_width) *
+                                 static_cast<size_t>(p->dyn_atlas_height);
+      std::vector<uint8_t> clear_buf(dyn_pixels * 4, 0);
+      d3d_ctx->UpdateSubresource(p->dyn_atlas_texture.Get(), 0, nullptr,
+                                  clear_buf.data(), p->dyn_atlas_width * 4, 0);
+    }
+
+    // Precompute UVs for each dynamic slot.
+    for (uint32_t i = 0; i < p->k_dyn_max_glyphs; ++i) {
+      uint32_t const col = i % p->k_dyn_atlas_cols;
+      uint32_t const row = i / p->k_dyn_atlas_cols;
+      uint32_t const slot_x = col * p->slot_width;
+      uint32_t const slot_y = row * p->slot_height;
+
+      auto& slot = p->dyn_glyph_slots[i];
+      slot.atlas_x = static_cast<uint16_t>(slot_x);
+      slot.atlas_y = static_cast<uint16_t>(slot_y);
+      slot.u0 = static_cast<float>(slot_x + k_glyph_padding) / static_cast<float>(p->dyn_atlas_width);
+      slot.v0 = static_cast<float>(slot_y + k_glyph_padding) / static_cast<float>(p->dyn_atlas_height);
+      slot.u1 = static_cast<float>(slot_x + k_glyph_padding + p->cell_width) / static_cast<float>(p->dyn_atlas_width);
+      slot.v1 = static_cast<float>(slot_y + k_glyph_padding + p->cell_height) / static_cast<float>(p->dyn_atlas_height);
+    }
+  }
+
   // --- 8. Compile shaders ---------------------------------------------------
   ComPtr<ID3DBlob> vs_blob;
   hr = compile_shader(k_vertex_shader_src, "main", "vs_5_0", vs_blob.GetAddressOf());
@@ -801,6 +885,7 @@ auto glyph_renderer::draw(d3d_device const& device,
   context->VSSetConstantBuffers(0, 1, impl_->constant_buffer.GetAddressOf());
   context->PSSetShader(impl_->pixel_shader.Get(), nullptr, 0);
   context->PSSetShaderResources(0, 1, impl_->atlas_srv.GetAddressOf());
+  context->PSSetShaderResources(1, 1, impl_->dyn_atlas_srv.GetAddressOf());
   context->PSSetSamplers(0, 1, impl_->sampler_state.GetAddressOf());
 
   // --- 3. Draw -------------------------------------------------------------
@@ -898,6 +983,7 @@ auto glyph_renderer::draw_text(d3d_device const& device,
   context->VSSetConstantBuffers(0, 1, impl_->constant_buffer.GetAddressOf());
   context->PSSetShader(impl_->pixel_shader.Get(), nullptr, 0);
   context->PSSetShaderResources(0, 1, impl_->atlas_srv.GetAddressOf());
+  context->PSSetShaderResources(1, 1, impl_->dyn_atlas_srv.GetAddressOf());
   context->PSSetSamplers(0, 1, impl_->sampler_state.GetAddressOf());
 
   // --- 3. Draw -------------------------------------------------------------
@@ -955,6 +1041,8 @@ auto glyph_renderer::draw_grid(d3d_device const& device,
   constexpr uint8_t k_attr_underline     = 1 << 3;
   constexpr uint8_t k_attr_strikethrough = 1 << 4;
   constexpr uint8_t k_attr_reverse       = 1 << 5;
+  constexpr uint8_t k_attr_wide          = 1 << 6;
+  constexpr uint8_t k_attr_wide_tail     = 1 << 7;
 
   // Only draw the cursor if it lies within the visible area.
   bool const cursor_visible =
@@ -964,14 +1052,22 @@ auto glyph_renderer::draw_grid(d3d_device const& device,
     float const y0 = static_cast<float>(row * impl_->cell_height);
     float const y1 = y0 + static_cast<float>(impl_->cell_height);
 
-    for (uint32_t col = 0; col < draw_cols && quad_count < k_max_glyphs_per_frame; ++col) {
+    for (uint32_t col = 0; col < draw_cols && quad_count < k_max_glyphs_per_frame; ) {
       size_t const idx = static_cast<size_t>(row) * dims.width + col;
-      if (idx >= cells.size()) continue;
+      if (idx >= cells.size()) break;
 
       auto const& cell = cells[idx];
 
+      // Skip wide_tail cells — they are rendered as part of the preceding wide cell.
+      if (cell.attr & k_attr_wide_tail) {
+        ++col;
+        continue;
+      }
+
+      bool const is_wide = (cell.attr & k_attr_wide) != 0;
+      float const glyph_cell_width = is_wide ? 2.0f : 1.0f;
       float const x0 = static_cast<float>(col * impl_->cell_width);
-      float const x1 = x0 + static_cast<float>(impl_->cell_width);
+      float const x1 = x0 + glyph_cell_width * static_cast<float>(impl_->cell_width);
 
       bool const is_cursor =
         cursor_visible && row == cursor.row && col == cursor.col;
@@ -1003,23 +1099,45 @@ auto glyph_renderer::draw_grid(d3d_device const& device,
       // Foreground glyph — only if the cell is not a space.
       char32_t const cp = cell.codepoint;
       if (cp != U' ' && cp != 0) {
-        unsigned char glyph =
-          (cp <= 127) ? static_cast<unsigned char>(cp)
-                        : static_cast<unsigned char>('?');
+        if (cp <= 127) {
+          unsigned char const glyph = static_cast<unsigned char>(cp);
 
-        // Italic uses slots 128–255 (rows 8–15 in the atlas).
-        uint32_t const slot_idx =
-            glyph + ((cell.attr & k_attr_italic) ? 128u : 0u);
-        auto& slot = impl_->glyph_slots[slot_idx];
+          // Italic uses slots 128–255 (rows 8–15 in the atlas).
+          uint32_t const slot_idx =
+              glyph + ((cell.attr & k_attr_italic) ? 128u : 0u);
+          auto& slot = impl_->glyph_slots[slot_idx];
 
-        emit_quad(x0, y0, x1, y1, slot.u0, slot.v0, slot.u1, slot.v1,
-                   fr, fg_f, fb);
-
-        // Bold: synthetic double-draw with 1px horizontal offset.
-        if (cell.attr & k_attr_bold) {
-          emit_quad(x0 + 1.0f, y0, x1 + 1.0f, y1,
-                     slot.u0, slot.v0, slot.u1, slot.v1,
+          emit_quad(x0, y0, x1, y1, slot.u0, slot.v0, slot.u1, slot.v1,
                      fr, fg_f, fb);
+
+          // Bold: synthetic double-draw with 1px horizontal offset.
+          if (cell.attr & k_attr_bold) {
+            emit_quad(x0 + 1.0f, y0, x1 + 1.0f, y1,
+                       slot.u0, slot.v0, slot.u1, slot.v1,
+                       fr, fg_f, fb);
+          }
+        } else {
+          // Non-ASCII: look up in dynamic atlas.
+          auto it = impl_->dyn_index_.find(cp);
+          if (it != impl_->dyn_index_.end()) {
+            auto& slot = impl_->dyn_glyph_slots[it->second];
+            // Dynamic atlas UVs are shifted by +2.0 in u to distinguish
+            // from ASCII atlas in the pixel shader.
+            float const du0 = slot.u0 + 2.0f;
+            float const dv0 = slot.v0;
+            float const du1 = slot.u1 + 2.0f;
+            float const dv1 = slot.v1;
+
+            emit_quad(x0, y0, x1, y1, du0, dv0, du1, dv1,
+                       fr, fg_f, fb);
+
+            if (cell.attr & k_attr_bold) {
+              emit_quad(x0 + 1.0f, y0, x1 + 1.0f, y1,
+                         du0, dv0, du1, dv1,
+                         fr, fg_f, fb);
+            }
+          }
+          // If glyph not in cache, silently skip (shouldn't happen after prepare).
         }
       }
 
@@ -1039,6 +1157,9 @@ auto glyph_renderer::draw_grid(d3d_device const& device,
                   -1.0f, 0.0f, -1.0f, 0.0f,
                   fr, fg_f, fb);
       }
+
+      // Advance column: 2 for wide, 1 for normal.
+      col += is_wide ? 2 : 1;
     }
   }
 
@@ -1071,6 +1192,7 @@ auto glyph_renderer::draw_grid(d3d_device const& device,
   context->VSSetConstantBuffers(0, 1, impl_->constant_buffer.GetAddressOf());
   context->PSSetShader(impl_->pixel_shader.Get(), nullptr, 0);
   context->PSSetShaderResources(0, 1, impl_->atlas_srv.GetAddressOf());
+  context->PSSetShaderResources(1, 1, impl_->dyn_atlas_srv.GetAddressOf());
   context->PSSetSamplers(0, 1, impl_->sampler_state.GetAddressOf());
 
   // --- 3. Draw -------------------------------------------------------------
@@ -1105,6 +1227,110 @@ auto glyph_renderer::update_dimensions(d3d_device const& device,
   impl_->window_height = dims.height;
 
   return {};
+}
+
+// ===========================================================================
+// glyph_renderer::ensure_glyph_cached
+// ===========================================================================
+
+auto glyph_renderer::ensure_glyph_cached(char32_t cp, d3d_device const& device) const
+    -> uint32_t
+{
+  auto* ctx = device.impl_->context.Get();
+  auto& p = *impl_;
+
+  // Check if already cached.
+  auto it = p.dyn_index_.find(cp);
+  if (it != p.dyn_index_.end()) {
+    uint32_t const slot = it->second;
+    p.dyn_access_[slot] = ++p.dyn_clock_;
+    return slot;
+  }
+
+  // Allocate a slot.
+  uint32_t slot = 0;
+  if (p.dyn_next_ < p.k_dyn_max_glyphs) {
+    slot = p.dyn_next_++;
+  } else {
+    // LRU eviction: find the slot with the smallest access counter.
+    uint64_t min_access = p.dyn_access_[0];
+    uint32_t min_slot = 0;
+    for (uint32_t i = 1; i < p.k_dyn_max_glyphs; ++i) {
+      if (p.dyn_access_[i] < min_access) {
+        min_access = p.dyn_access_[i];
+        min_slot = i;
+      }
+    }
+    slot = min_slot;
+    // Remove the evicted codepoint from the index.
+    for (auto const& kv : p.dyn_index_) {
+      if (kv.second == slot) {
+        p.dyn_index_.erase(kv.first);
+        break;
+      }
+    }
+  }
+
+  p.dyn_access_[slot] = ++p.dyn_clock_;
+
+  // Rasterize the glyph into a staging buffer (one slot).
+  uint32_t const slot_x = (slot % p.k_dyn_atlas_cols) * p.slot_width;
+  uint32_t const slot_y = (slot / p.k_dyn_atlas_cols) * p.slot_height;
+
+  size_t const buf_pixels = static_cast<size_t>(p.dyn_atlas_width) *
+                             static_cast<size_t>(p.dyn_atlas_height);
+  std::vector<uint8_t> staging_buffer(buf_pixels * 4, 0);
+
+  constexpr float k_font_size = static_cast<float>(k_font_size_px);
+
+  bool const rasterized = rasterize_glyph(
+    p.dwrite_factory.Get(),
+    p.font_face.Get(),
+    k_font_size,
+    static_cast<uint32_t>(cp),
+    slot_x, slot_y,
+    p.dyn_atlas_width,
+    p.cell_width, p.cell_height,
+    p.baseline_y,
+    staging_buffer
+  );
+
+  // Upload the slot region to the dynamic atlas texture.
+  if (rasterized) {
+    D3D11_BOX box{};
+    box.left   = slot_x;
+    box.right  = slot_x + p.slot_width;
+    box.top    = slot_y;
+    box.bottom = slot_y + p.slot_height;
+    box.front  = 0;
+    box.back   = 1;
+
+    ctx->UpdateSubresource(p.dyn_atlas_texture.Get(), 0, &box,
+                            staging_buffer.data(),
+                            p.dyn_atlas_width * 4, 0);
+  }
+
+  // Store in index regardless of rasterization success (avoids retrying).
+  p.dyn_index_[cp] = slot;
+  return slot;
+}
+
+// ===========================================================================
+// glyph_renderer::prepare_unicode_glyphs
+// ===========================================================================
+
+void glyph_renderer::prepare_unicode_glyphs(
+    d3d_device const& device,
+    std::span<const render_cell> cells) const
+{
+  constexpr uint8_t k_attr_wide_tail = 1 << 7;
+
+  for (auto const& cell : cells) {
+    if (cell.codepoint <= 127) continue;
+    if (cell.codepoint == U' ') continue;
+    if (cell.attr & k_attr_wide_tail) continue;
+    (void)ensure_glyph_cached(cell.codepoint, device);
+  }
 }
 
 } // namespace betty::platform
