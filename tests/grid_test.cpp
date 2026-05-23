@@ -523,6 +523,137 @@ TEST_CASE("Grid — resize to zero", "[grid][resize][edge]") {
     CHECK(g.cursor_row() == 0);
 }
 
+TEST_CASE("Grid — resize preserves SGR colours", "[grid][resize]") {
+    terminal_grid g(4, 2);
+    // Set row 0 to red text on blue background.
+    g.write_bytes("\x1B[31m\x1B[44m");  // SGR red fg, blue bg
+    g.write_char(U'A');
+    g.write_char(U'B');
+    // Grow columns from 4 to 8.
+    g.resize(8, 2);
+    auto const& c0 = g.cell(0, 0);
+    CHECK(c0.codepoint == U'A');
+    // Red fg = palette[1] = {0xf3, 0x8b, 0xa8, 0}
+    CHECK(c0.fg.r == 0xf3);
+    CHECK(c0.fg.g == 0x8b);
+    CHECK(c0.fg.b == 0xa8);
+    CHECK(c0.fg.flags == 0);
+    // Blue bg = palette[4] = {0x89, 0xb4, 0xfa, 0}
+    CHECK(c0.bg.r == 0x89);
+    CHECK(c0.bg.g == 0xb4);
+    CHECK(c0.bg.b == 0xfa);
+    CHECK(c0.bg.flags == 0);
+    // Second cell also preserved.
+    auto const& c1 = g.cell(0, 1);
+    CHECK(c1.codepoint == U'B');
+    CHECK(c1.fg.r == 0xf3);
+    CHECK(c1.bg.r == 0x89);
+    // New cells (col 4–7) should be default.
+    auto const& c4 = g.cell(0, 4);
+    CHECK(c4.codepoint == U' ');
+    CHECK(c4.fg.flags == 1);
+    CHECK(c4.bg.flags == 1);
+}
+
+TEST_CASE("Grid — resize only rows (same cols)", "[grid][resize]") {
+    terminal_grid g(5, 3);
+    g.write_char(U'a'); g.write_char(U'b'); g.write_char(U'c');
+    g.newline();  // (1, 0)
+    g.write_char(U'd');
+    g.resize(5, 5);  // grow taller
+    CHECK(g.cols() == 5);
+    CHECK(g.rows() == 5);
+    CHECK(g.cell(0, 0).codepoint == U'a');
+    CHECK(g.cell(0, 2).codepoint == U'c');
+    CHECK(g.cell(1, 0).codepoint == U'd');
+    // New rows should be spaces.
+    CHECK(g.cell(3, 0).codepoint == U' ');
+    CHECK(g.cell(4, 4).codepoint == U' ');
+}
+
+TEST_CASE("Grid — resize only cols (same rows)", "[grid][resize]") {
+    terminal_grid g(4, 3);
+    g.write_char(U'x'); g.write_char(U'y'); g.write_char(U'z');
+    g.resize(6, 3);  // grow wider
+    CHECK(g.cols() == 6);
+    CHECK(g.rows() == 3);
+    CHECK(g.cell(0, 0).codepoint == U'x');
+    CHECK(g.cell(0, 1).codepoint == U'y');
+    CHECK(g.cell(0, 2).codepoint == U'z');
+    // New columns should be spaces.
+    CHECK(g.cell(0, 4).codepoint == U' ');
+    CHECK(g.cell(0, 5).codepoint == U' ');
+    // Other rows untouched.
+    CHECK(g.cell(1, 0).codepoint == U' ');
+}
+
+TEST_CASE("Grid — resize from zero-size grid", "[grid][resize][edge]") {
+    terminal_grid g(0, 0);
+    g.resize(10, 5);
+    CHECK(g.cols() == 10);
+    CHECK(g.rows() == 5);
+    // All cells should be default-initialised.
+    for (uint32_t r = 0; r < 5; ++r)
+        for (uint32_t c = 0; c < 10; ++c) {
+            auto const& cell = g.cell(r, c);
+            CHECK(cell.codepoint == U' ');
+            CHECK(cell.fg.flags == 1);
+            CHECK(cell.bg.flags == 1);
+        }
+}
+
+TEST_CASE("Grid — resize truncates rows beyond copy_rows", "[grid][resize]") {
+    // Use a 3×5 grid and only fill rows 0–3 (leave row 4 as buffer to
+    // avoid auto-wrap-scroll corrupting the test).
+    terminal_grid g(3, 5);
+    // Place each row via CUP + exactly 3 characters (no auto-wrap trigger).
+    g.write_bytes("\x1B[1;1H");  g.write_bytes("aaa");
+    g.write_bytes("\x1B[2;1H");  g.write_bytes("bbb");
+    g.write_bytes("\x1B[3;1H");  g.write_bytes("ccc");
+    g.write_bytes("\x1B[4;1H");  g.write_bytes("ddd");
+    // Shrink to 2 rows.
+    g.resize(3, 2);
+    CHECK(g.rows() == 2);
+    CHECK(g.cell(0, 0).codepoint == U'a');
+    CHECK(g.cell(0, 1).codepoint == U'a');
+    CHECK(g.cell(1, 0).codepoint == U'b');
+    // Row 2 and 3 are gone — cells() should only have 6 entries.
+    CHECK(g.cells().size() == 6);
+}
+
+TEST_CASE("Grid — write after resize works correctly", "[grid][resize]") {
+    terminal_grid g(5, 3);
+    g.resize(10, 5);
+    // Write to a position that was outside the old grid.
+    g.write_bytes("\x1B[3;8H");  // CUP to (2, 7)
+    g.write_char(U'X');
+    CHECK(g.cell(2, 7).codepoint == U'X');
+    // Cursor should advance correctly.
+    CHECK(g.cursor_col() == 8);
+    CHECK(g.cursor_row() == 2);
+    // Write more to test auto-wrap in new dimensions.
+    g.write_char(U'Y');  // col 8
+    g.write_char(U'Z');  // col 9, wraps
+    CHECK(g.cell(2, 8).codepoint == U'Y');
+    CHECK(g.cell(2, 9).codepoint == U'Z');
+    CHECK(g.cursor_row() == 3);
+    CHECK(g.cursor_col() == 0);
+}
+
+TEST_CASE("Grid — resize preserves render_cells output", "[grid][resize]") {
+    terminal_grid g(3, 2);
+    g.write_char(U'a'); g.write_char(U'b');
+    g.resize(5, 3);
+    auto const rc = g.render_cells();
+    REQUIRE(rc.size() == 15);  // 5 * 3
+    // Original cells should render at their positions.
+    CHECK(rc[0].codepoint == U'a');
+    CHECK(rc[1].codepoint == U'b');
+    // New cells should be space with default colours.
+    CHECK(rc[4].codepoint == U' ');
+    CHECK(rc[5].codepoint == U' ');
+}
+
 // ===========================================================================
 // Integration — write_bytes with CSI sequences
 // ===========================================================================

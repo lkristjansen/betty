@@ -158,4 +158,49 @@ auto make_render_target_view(d3d_device const& device, d3d_swap_chain const& swa
   return result;
 }
 
+// ===========================================================================
+// resize_swap_chain
+// ===========================================================================
+
+auto resize_swap_chain(d3d_device const& device,
+                        d3d_swap_chain& swap_chain,
+                        d3d_render_target_view old_rtv,
+                        window_dimensions new_size)
+  -> std::expected<d3d_render_target_view, std::error_code> {
+
+  if (new_size.width == 0 || new_size.height == 0) {
+    return std::unexpected(make_win32_error(ERROR_INVALID_PARAMETER));
+  }
+
+  // 1. Unbind any RTV from the pipeline.
+  device.impl_->context->OMSetRenderTargets(0, nullptr, nullptr);
+
+  // 2. Release the old RTV.  The ComPtr must be destroyed before
+  //    ResizeBuffers, otherwise DXGI reports that the back buffer is still
+  //    referenced.
+  old_rtv.impl_.reset();
+
+  // 3. Query the existing swap chain description so we preserve the format,
+  //    buffer count, and flags.
+  DXGI_SWAP_CHAIN_DESC1 desc{};
+  HRESULT hr = swap_chain.impl_->swap_chain->GetDesc1(&desc);
+  if (FAILED(hr)) {
+    return std::unexpected(make_hresult_error(hr));
+  }
+
+  // 4. Resize the buffers.
+  hr = swap_chain.impl_->swap_chain->ResizeBuffers(
+      desc.BufferCount,
+      new_size.width,
+      new_size.height,
+      desc.Format,
+      desc.Flags);
+  if (FAILED(hr)) {
+    return std::unexpected(make_hresult_error(hr));
+  }
+
+  // 5. Create a new RTV from the resized back buffer.
+  return make_render_target_view(device, swap_chain);
+}
+
 } // namespace betty::platform

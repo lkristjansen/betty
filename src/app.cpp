@@ -1,5 +1,6 @@
 #include "app.hpp"
 #include "util/log.hpp"
+#include <algorithm>
 
 namespace betty {
 
@@ -48,10 +49,66 @@ int Application::run() {
       }
     });
 
+  // Resize callback — swap chain + renderer on every WM_SIZE;
+  // grid + ConPTY only on completed resize (drag release / maximize / restore).
+  platform::set_resize_callback(window_,
+    [this](uint32_t width, uint32_t height, bool completed) {
+      // Ignore zero-area resize (minimized window).
+      if (width == 0 || height == 0) return;
+
+      platform::window_dimensions const new_dims{width, height};
+
+      // Always: resize swap chain + update renderer constant buffer.
+      auto new_rtv = platform::resize_swap_chain(
+          device_, swap_chain_, std::move(rtv_), new_dims);
+      if (new_rtv) {
+        rtv_ = std::move(*new_rtv);
+      } else {
+        util::log_error(new_rtv.error(), "resize swap chain");
+        return;  // rtv_ is now empty; the RTV guard below will exit cleanly.
+      }
+
+      if (auto result = renderer_.update_dimensions(device_, new_dims);
+          !result) {
+        util::log_error(result.error(), "update renderer dimensions");
+      }
+
+      // Only on completed resize: recompute terminal dimensions, resize
+      // the grid buffer, and notify the ConPTY shell.
+      if (completed) {
+        uint32_t const cell_w = renderer_.cell_width();
+        uint32_t const cell_h = renderer_.cell_height();
+
+        uint32_t const new_cols = std::max(80u, width / cell_w);
+        uint32_t const new_rows = std::max(1u,  height / cell_h);
+
+        if (new_cols != grid_.cols() || new_rows != grid_.rows()) {
+          grid_.resize(new_cols, new_rows);
+
+          if (shell_ && platform::is_shell_running(*shell_)) {
+            if (auto result =
+                    platform::resize_shell(*shell_, new_cols, new_rows);
+                !result) {
+              util::log_error(result.error(), "resize shell");
+            }
+          }
+        }
+      }
+    });
+
   // Message loop
   int exit_code = 0;
   bool exit_notified = false;
   while (platform::dispatch_pending_messages()) {
+    // Guard: if a failed resize left the RTV empty, exit cleanly.
+    if (!rtv_) {
+      util::log_error(
+          std::make_error_code(std::errc::io_error),
+          "RTV was invalidated by a failed resize, exiting");
+      exit_code = 1;
+      break;
+    }
+
     device_.clear(rtv_, platform::mocha_base);
 
     // Read shell output
@@ -171,6 +228,11 @@ auto make_application() -> std::expected<Application, std::error_code> {
     util::log_error(shell_result.error(), "Failed to create shell process");
     shell_creation_failed = true;
   }
+
+  // Set minimum window size: 80 columns × 1 row.
+  uint32_t const min_win_width  = 80 * cell_w;
+  uint32_t const min_win_height = 1 * cell_h;
+  platform::set_min_window_size(window, min_win_width, min_win_height);
 
   return Application{std::move(window), std::move(device),
                      std::move(swap_chain), std::move(rtv),

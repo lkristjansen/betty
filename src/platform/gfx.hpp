@@ -52,6 +52,9 @@ private:
   friend struct glyph_renderer;  // needs impl_->context for drawing
   friend auto make_glyph_renderer(d3d_device const&, window_dimensions const&)
     -> std::expected<glyph_renderer, std::error_code>;  // needs impl_->device / context
+  friend auto resize_swap_chain(d3d_device const&, d3d_swap_chain&,
+                                d3d_render_target_view, window_dimensions)
+    -> std::expected<d3d_render_target_view, std::error_code>;
 };
 
 [[nodiscard]] auto make_device() -> std::expected<d3d_device, std::error_code>;
@@ -81,6 +84,9 @@ private:
     -> std::expected<d3d_swap_chain, std::error_code>;
   friend auto make_render_target_view(d3d_device const&, d3d_swap_chain const&)
     -> std::expected<d3d_render_target_view, std::error_code>;
+  friend auto resize_swap_chain(d3d_device const&, d3d_swap_chain&,
+                                d3d_render_target_view, window_dimensions)
+    -> std::expected<d3d_render_target_view, std::error_code>;
 };
 
 [[nodiscard]] auto make_swap_chain(d3d_device const& device, win32_window const& window,
@@ -97,6 +103,8 @@ struct d3d_render_target_view {
   d3d_render_target_view(d3d_render_target_view const&) = delete;
   d3d_render_target_view& operator=(d3d_render_target_view const&) = delete;
 
+  [[nodiscard]] explicit operator bool() const noexcept { return impl_ != nullptr; }
+
 private:
   struct empty_tag {};
   explicit d3d_render_target_view(empty_tag) noexcept;
@@ -108,9 +116,23 @@ private:
     -> std::expected<d3d_render_target_view, std::error_code>;
   friend struct d3d_device;  // needs impl_->rtv for OMSetRenderTargets / ClearRenderTargetView
   friend struct glyph_renderer;  // needs impl_->rtv for OMSetRenderTargets
+  friend auto resize_swap_chain(d3d_device const&, d3d_swap_chain&,
+                                d3d_render_target_view, window_dimensions)
+    -> std::expected<d3d_render_target_view, std::error_code>;
 };
 
 [[nodiscard]] auto make_render_target_view(d3d_device const& device, d3d_swap_chain const& swap_chain)
+  -> std::expected<d3d_render_target_view, std::error_code>;
+
+// Resize the swap chain buffers and create a new render target view.
+// Takes ownership of the old RTV (passed by value) and releases it before
+// calling IDXGISwapChain::ResizeBuffers.  Returns a new RTV for the resized
+// back buffer on success.
+[[nodiscard]] auto resize_swap_chain(
+    d3d_device const& device,
+    d3d_swap_chain& swap_chain,
+    d3d_render_target_view old_rtv,
+    window_dimensions new_size)
   -> std::expected<d3d_render_target_view, std::error_code>;
 
 } // namespace betty::platform

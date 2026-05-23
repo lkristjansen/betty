@@ -98,6 +98,53 @@ LRESULT CALLBACK WndProc(HWND hwnd, UINT msg, WPARAM wParam, LPARAM lParam) {
     return 0;
   }
 
+  case WM_SIZE: {
+    if (auto* cbs = get_callbacks(hwnd)) {
+      if (cbs->on_resize) {
+        uint32_t const width  = static_cast<uint32_t>(LOWORD(lParam));
+        uint32_t const height = static_cast<uint32_t>(HIWORD(lParam));
+        // WM_EXITSIZEMOVE is only sent for drag-resize.  For maximize/restore
+        // we treat WM_SIZE itself as the completed resize.
+        bool const completed =
+            (wParam == SIZE_MAXIMIZED || wParam == SIZE_RESTORED);
+        cbs->on_resize(width, height, completed);
+      }
+    }
+    return 0;
+  }
+
+  case WM_EXITSIZEMOVE: {
+    if (auto* cbs = get_callbacks(hwnd)) {
+      if (cbs->on_resize) {
+        RECT rect{};
+        if (GetClientRect(hwnd, &rect)) {
+          uint32_t const width  = static_cast<uint32_t>(rect.right - rect.left);
+          uint32_t const height = static_cast<uint32_t>(rect.bottom - rect.top);
+          cbs->on_resize(width, height, true);
+        }
+      }
+    }
+    return 0;
+  }
+
+  case WM_GETMINMAXINFO: {
+    if (auto* cbs = get_callbacks(hwnd)) {
+      auto* mmi = reinterpret_cast<MINMAXINFO*>(lParam);
+      if (cbs->min_client_width > 0 && cbs->min_client_height > 0) {
+        RECT rect{0, 0,
+                  static_cast<LONG>(cbs->min_client_width),
+                  static_cast<LONG>(cbs->min_client_height)};
+        DWORD const style =
+            static_cast<DWORD>(GetWindowLongPtrW(hwnd, GWL_STYLE));
+        if (AdjustWindowRectEx(&rect, style, FALSE, 0)) {
+          mmi->ptMinTrackSize.x = rect.right - rect.left;
+          mmi->ptMinTrackSize.y = rect.bottom - rect.top;
+        }
+      }
+    }
+    return 0;
+  }
+
   default:
     return DefWindowProcW(hwnd, msg, wParam, lParam);
   }
@@ -187,7 +234,7 @@ auto make_window(window_settings const& settings)
   }
 
   // 2. Adjust window rect to get the desired client area size
-  DWORD dwStyle = WS_OVERLAPPEDWINDOW & ~(WS_THICKFRAME | WS_MAXIMIZEBOX);
+  DWORD dwStyle = WS_OVERLAPPEDWINDOW;
   RECT rect{ 0, 0, static_cast<LONG>(settings.size.width), static_cast<LONG>(settings.size.height) };
   if (!AdjustWindowRectEx(&rect, dwStyle, FALSE, 0)) {
     return std::unexpected(make_win32_error());
@@ -270,6 +317,21 @@ auto set_key_callback(win32_window& window, std::function<void(vk_code, bool ctr
 auto set_char_callback(win32_window& window, std::function<void(uint32_t codepoint)> cb) -> void {
   if (window.callbacks_) {
     window.callbacks_->on_char = std::move(cb);
+  }
+}
+
+auto set_resize_callback(win32_window& window,
+    std::function<void(uint32_t width, uint32_t height, bool completed)> cb) -> void {
+  if (window.callbacks_) {
+    window.callbacks_->on_resize = std::move(cb);
+  }
+}
+
+auto set_min_window_size(win32_window& window,
+    uint32_t client_width, uint32_t client_height) -> void {
+  if (window.callbacks_) {
+    window.callbacks_->min_client_width  = client_width;
+    window.callbacks_->min_client_height = client_height;
   }
 }
 
