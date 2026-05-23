@@ -66,6 +66,19 @@ public:
   // Cursor row is unchanged (caller adjusts if needed).
   void scroll_up();
 
+  // --- Scrollback -----------------------------------------------------------
+
+  // Maximum number of off-screen lines retained.
+  static constexpr uint32_t k_scrollback_max = 10000;
+
+  // Scroll the viewport up/down by `delta` rows.
+  // Positive delta = scroll back (up), negative = scroll forward (down).
+  // Returns the new viewport scroll offset.
+  auto scroll_viewport(int32_t delta) -> uint32_t;
+
+  // Whether the viewport is following output (at the bottom).
+  [[nodiscard]] auto is_following_output() const noexcept -> bool { return viewport_scroll_ == 0; }
+
   // --- Access (for rendering) -----------------------------------------------
 
   [[nodiscard]] auto cell(uint32_t row, uint32_t col) const -> grid_cell const&;
@@ -92,8 +105,33 @@ private:
   uint32_t cursor_row_ = 0;
   uint32_t saved_cursor_col_ = 0;
   uint32_t saved_cursor_row_ = 0;
-  std::vector<grid_cell> cells_;  // size = cols_ * rows_, row-major
+
+  // ── Circular buffer ────────────────────────────────────────────────────
+  //
+  // The grid stores scrollback + visible rows in a single circular buffer.
+  // Physical capacity: total_capacity_rows_ = rows_ + k_scrollback_max.
+  // cells_ has size = cols_ * total_capacity_rows_.
+  //
+  // Logical layout (conceptual):
+  //   [oldest scrollback] ... [newest scrollback] [visible row 0] ... [visible row rows_-1]
+  //
+  // scrollback_head_  — physical index of the oldest scrollback row.
+  // scrollback_count_ — how many scrollback rows exist (0..k_scrollback_max).
+  // visible_idx(logical) = (scrollback_head_ + logical) % total_capacity_rows_.
+  //
+  // The visible portion is always the last rows_ logical rows
+  // (i.e. logical indices [scrollback_count_, scrollback_count_+rows_)).
+
+  uint32_t total_capacity_rows_ = 0;
+  uint32_t scrollback_head_ = 0;
+  uint32_t scrollback_count_ = 0;
+  uint32_t viewport_scroll_ = 0;  // 0 = following output; >0 = scrolled back
+  std::vector<grid_cell> cells_;
   vt_parser parser_;
+
+  // Convert a logical row index (0 = oldest scrollback) to a physical
+  // index into cells_.  Assumes logical < scrollback_count_ + rows_.
+  [[nodiscard]] auto physical_index(uint32_t logical_row) const -> uint32_t;
 
   // Cache of resolved render_cell values for the platform renderer.
   mutable std::vector<platform::render_cell> render_cache_;
@@ -103,9 +141,6 @@ private:
   rgb_color current_bg_ = default_bg();
 
   // --- Erase helpers (Task 8) ----------------------------------------------
-
-  // Erase a contiguous range of cells [start_idx, end_idx] inclusive.
-  void erase_cell_range(size_t start_idx, size_t end_idx);
 
   // ED — Erase in Display (CSI Ps J).
   void erase_display(uint32_t mode);

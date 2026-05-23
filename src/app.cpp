@@ -37,6 +37,27 @@ int Application::run() {
   // control keys, arrows, Ctrl combos).  No WM_CHAR needed.
   platform::set_key_callback(window_,
     [this](platform::vk_code vk, bool ctrl, bool shift, bool alt) {
+      // ── Scrollback navigation ──────────────────────────────────────
+      if (ctrl && shift && !alt) {
+        if (vk == platform::vk_code::arrow_up) {
+          grid_.scroll_viewport(1);
+          return;
+        }
+        if (vk == platform::vk_code::arrow_down) {
+          grid_.scroll_viewport(-1);
+          return;
+        }
+        if (vk == platform::vk_code::page_up) {
+          grid_.scroll_viewport(static_cast<int32_t>(grid_.rows() > 0 ? grid_.rows() - 1 : 0));
+          return;
+        }
+        if (vk == platform::vk_code::page_down) {
+          grid_.scroll_viewport(-static_cast<int32_t>(grid_.rows() > 0 ? grid_.rows() - 1 : 0));
+          return;
+        }
+      }
+
+      // ── Normal shell input ─────────────────────────────────────────
       if (!shell_ || !platform::is_shell_running(*shell_)) return;
       if (shell_input_failed_) return;
 
@@ -135,7 +156,11 @@ int Application::run() {
     auto const cells = grid_.render_cells();
     if (!cells.empty()) {
       platform::size2d const dims{grid_.cols(), grid_.rows()};
-      platform::point2d const cursor{grid_.cursor_row(), grid_.cursor_col()};
+      // Suppress cursor when scrolled back (pass out-of-bounds position).
+      platform::point2d const cursor{
+        grid_.is_following_output() ? grid_.cursor_row() : grid_.rows(),
+        grid_.is_following_output() ? grid_.cursor_col() : grid_.cols()
+      };
       if (auto draw_result = renderer_.draw_grid(device_, rtv_, cells, dims, cursor);
           !draw_result) {
         util::log_error(draw_result.error(), "draw grid");

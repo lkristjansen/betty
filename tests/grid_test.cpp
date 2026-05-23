@@ -183,28 +183,26 @@ TEST_CASE("Grid — scroll_up on single-row grid clears cells", "[grid][scroll_u
 }
 
 // ===========================================================================
-// Access — cells() and codepoints()
+// Access — cell()
 // ===========================================================================
 
-TEST_CASE("Grid — cells() returns full span", "[grid][access]") {
+TEST_CASE("Grid — cell() returns correct codepoint", "[grid][access]") {
     terminal_grid g(2, 2);
     g.write_char(U'a');
-    auto c = g.cells();
-    REQUIRE(c.size() == 4);
-    CHECK(c[0].codepoint == U'a');
-    CHECK(c[1].codepoint == U' ');
+    CHECK(g.cell(0, 0).codepoint == U'a');
+    CHECK(g.cell(0, 1).codepoint == U' ');
+    CHECK(g.cell(1, 0).codepoint == U' ');
+    CHECK(g.cell(1, 1).codepoint == U' ');
 }
 
-TEST_CASE("Grid — cells() returns full cell data", "[grid][access]") {
+TEST_CASE("Grid — cell() returns full cell data", "[grid][access]") {
     terminal_grid g(2, 2);
     g.write_char(U'a');
     g.write_char(U'b');
-    auto c = g.cells();
-    REQUIRE(c.size() == 4);
-    CHECK(c[0].codepoint == U'a');
-    CHECK(c[1].codepoint == U'b');
-    CHECK(c[2].codepoint == U' ');
-    CHECK(c[3].codepoint == U' ');
+    CHECK(g.cell(0, 0).codepoint == U'a');
+    CHECK(g.cell(0, 1).codepoint == U'b');
+    CHECK(g.cell(1, 0).codepoint == U' ');
+    CHECK(g.cell(1, 1).codepoint == U' ');
 }
 
 // ===========================================================================
@@ -496,10 +494,15 @@ TEST_CASE("Grid — resize smaller truncates content", "[grid][resize]") {
     g.resize(3, 3);
     CHECK(g.cols() == 3);
     CHECK(g.rows() == 3);
+    // With scrollback, all rows are preserved (reflowed from 5→3 cols).
+    // Original row 0 (a,b,c,d,e) becomes 2 rows: (a,b,c) and (d,e,' ').
+    // Since there are now 10 reflowed rows and only 3 visible, the bottom
+    // 3 are visible. Scroll to top to check original content.
+    CHECK(g.is_following_output() == true);
+    g.scroll_viewport(7);  // scroll back to the top
     CHECK(g.cell(0, 0).codepoint == U'a');
     CHECK(g.cell(0, 1).codepoint == U'b');
     CHECK(g.cell(0, 2).codepoint == U'c');
-    // Column 3,4 and rows 3,4 are gone.
 }
 
 TEST_CASE("Grid — resize clamps cursor to new bounds", "[grid][resize]") {
@@ -614,11 +617,13 @@ TEST_CASE("Grid — resize truncates rows beyond copy_rows", "[grid][resize]") {
     // Shrink to 2 rows.
     g.resize(3, 2);
     CHECK(g.rows() == 2);
+    CHECK(g.cols() == 3);
+    // With scrollback, the bottom 2 rows are visible (rows 3 "ddd" and 4 spaces).
+    // Scroll back to the top to verify original content is preserved.
+    g.scroll_viewport(3);  // scroll to show rows 0-1 (aaa, bbb)
     CHECK(g.cell(0, 0).codepoint == U'a');
     CHECK(g.cell(0, 1).codepoint == U'a');
     CHECK(g.cell(1, 0).codepoint == U'b');
-    // Row 2 and 3 are gone — cells() should only have 6 entries.
-    CHECK(g.cells().size() == 6);
 }
 
 TEST_CASE("Grid — write after resize works correctly", "[grid][resize]") {
