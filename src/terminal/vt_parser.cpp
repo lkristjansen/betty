@@ -233,6 +233,59 @@ auto vt_parser::dispatch(char const final_byte) -> std::vector<action> {
     }};
   }
 
+  // ── IL: Insert Lines ────────────────────────────────────────────────
+  if (final_byte == 'L') {
+    auto const params = split_params(param_buffer_);
+    uint32_t const count = (params.size() > 0 && params[0] > 0) ? params[0] : 1;
+    return {action{
+      .type = action_type::insert_lines,
+      .count = count
+    }};
+  }
+
+  // ── DL: Delete Lines ────────────────────────────────────────────────
+  if (final_byte == 'M') {
+    auto const params = split_params(param_buffer_);
+    uint32_t const count = (params.size() > 0 && params[0] > 0) ? params[0] : 1;
+    return {action{
+      .type = action_type::delete_lines,
+      .count = count
+    }};
+  }
+
+  // ── SU: Scroll Up ───────────────────────────────────────────────────
+  if (final_byte == 'S') {
+    auto const params = split_params(param_buffer_);
+    uint32_t const count = (params.size() > 0 && params[0] > 0) ? params[0] : 1;
+    return {action{
+      .type = action_type::scroll_up_page,
+      .count = count
+    }};
+  }
+
+  // ── SD: Scroll Down ─────────────────────────────────────────────────
+  if (final_byte == 'T') {
+    auto const params = split_params(param_buffer_);
+    uint32_t const count = (params.size() > 0 && params[0] > 0) ? params[0] : 1;
+    return {action{
+      .type = action_type::scroll_down_page,
+      .count = count
+    }};
+  }
+
+  // ── DECSTBM: Set scrolling region ───────────────────────────────────
+  if (final_byte == 'r') {
+    auto const params = split_params(param_buffer_);
+    // params are 1-based; 0 means "reset to full screen" (stored as 0).
+    uint32_t const top = (params.size() > 0) ? params[0] : 1;
+    uint32_t const bottom = (params.size() > 1) ? params[1] : 0;
+    return {action{
+      .type = action_type::set_scroll_region,
+      .row = top,
+      .col = bottom
+    }};
+  }
+
   // ── Cursor movement (existing) ───────────────────────────────────────
   auto const [p1, p2] = parse_params();
 

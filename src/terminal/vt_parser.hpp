@@ -115,6 +115,11 @@ enum class action_type : uint8_t {
   sgr_clear_attr,     // turn OFF a bitmask of attributes (payload in action::count)
   erase_display,      // ED: clear cells in display (mode in action::count)
   erase_line,         // EL: clear cells in current line (mode in action::count)
+  insert_lines,       // IL: insert n blank lines at cursor (count)
+  delete_lines,       // DL: delete n lines at cursor (count)
+  scroll_up_page,     // SU: scroll up within scroll region (count lines)
+  scroll_down_page,   // SD: scroll down within scroll region (count lines)
+  set_scroll_region,  // DECSTBM: set top/bottom scroll margins (row, col, 1-based)
   set_window_title,   // OSC 0/1/2 — set window title
 };
 

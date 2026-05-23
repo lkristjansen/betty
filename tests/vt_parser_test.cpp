@@ -641,3 +641,181 @@ TEST_CASE("OSC — byte-by-byte feeding", "[osc][multi-byte]") {
     CHECK(v[0].type == action_type::set_window_title);
     CHECK(v[0].title == "x");
 }
+
+// ===========================================================================
+// Task 13 — IL: Insert Lines (CSI Ps L)
+// ===========================================================================
+
+TEST_CASE("CSI IL — no param defaults to count=1", "[csi][il]") {
+    auto const v = parse_sequence("\x1B[L");
+    REQUIRE(v.size() == 1);
+    CHECK(v[0].type == action_type::insert_lines);
+    CHECK(v[0].count == 1);
+}
+
+TEST_CASE("CSI IL — explicit count", "[csi][il]") {
+    auto const v = parse_sequence("\x1B[5L");
+    REQUIRE(v.size() == 1);
+    CHECK(v[0].type == action_type::insert_lines);
+    CHECK(v[0].count == 5);
+}
+
+TEST_CASE("CSI IL — zero param defaulted to 1", "[csi][il]") {
+    auto const v = parse_sequence("\x1B[0L");
+    REQUIRE(v.size() == 1);
+    CHECK(v[0].type == action_type::insert_lines);
+    CHECK(v[0].count == 1);
+}
+
+TEST_CASE("CSI IL — with intermediate byte after param", "[csi][il]") {
+    auto const v = parse_sequence("\x1B[3 L");
+    REQUIRE(v.size() == 1);
+    CHECK(v[0].type == action_type::insert_lines);
+    CHECK(v[0].count == 3);
+}
+
+// ===========================================================================
+// Task 13 — DL: Delete Lines (CSI Ps M)
+// ===========================================================================
+
+TEST_CASE("CSI DL — no param defaults to count=1", "[csi][dl]") {
+    auto const v = parse_sequence("\x1B[M");
+    REQUIRE(v.size() == 1);
+    CHECK(v[0].type == action_type::delete_lines);
+    CHECK(v[0].count == 1);
+}
+
+TEST_CASE("CSI DL — explicit count", "[csi][dl]") {
+    auto const v = parse_sequence("\x1B[3M");
+    REQUIRE(v.size() == 1);
+    CHECK(v[0].type == action_type::delete_lines);
+    CHECK(v[0].count == 3);
+}
+
+TEST_CASE("CSI DL — zero param defaulted to 1", "[csi][dl]") {
+    auto const v = parse_sequence("\x1B[0M");
+    REQUIRE(v.size() == 1);
+    CHECK(v[0].type == action_type::delete_lines);
+    CHECK(v[0].count == 1);
+}
+
+// ===========================================================================
+// Task 13 — SU: Scroll Up (CSI Ps S)
+// ===========================================================================
+
+TEST_CASE("CSI SU — no param defaults to count=1", "[csi][su]") {
+    auto const v = parse_sequence("\x1B[S");
+    REQUIRE(v.size() == 1);
+    CHECK(v[0].type == action_type::scroll_up_page);
+    CHECK(v[0].count == 1);
+}
+
+TEST_CASE("CSI SU — explicit count", "[csi][su]") {
+    auto const v = parse_sequence("\x1B[4S");
+    REQUIRE(v.size() == 1);
+    CHECK(v[0].type == action_type::scroll_up_page);
+    CHECK(v[0].count == 4);
+}
+
+// ===========================================================================
+// Task 13 — SD: Scroll Down (CSI Ps T)
+// ===========================================================================
+
+TEST_CASE("CSI SD — no param defaults to count=1", "[csi][sd]") {
+    auto const v = parse_sequence("\x1B[T");
+    REQUIRE(v.size() == 1);
+    CHECK(v[0].type == action_type::scroll_down_page);
+    CHECK(v[0].count == 1);
+}
+
+TEST_CASE("CSI SD — explicit count", "[csi][sd]") {
+    auto const v = parse_sequence("\x1B[2T");
+    REQUIRE(v.size() == 1);
+    CHECK(v[0].type == action_type::scroll_down_page);
+    CHECK(v[0].count == 2);
+}
+
+// ===========================================================================
+// Task 13 — DECSTBM: Set Scrolling Region (CSI Ps ; Ps r)
+// ===========================================================================
+
+TEST_CASE("CSI DECSTBM — set region", "[csi][decstbm]") {
+    auto const v = parse_sequence("\x1B[3;10r");
+    REQUIRE(v.size() == 1);
+    CHECK(v[0].type == action_type::set_scroll_region);
+    CHECK(v[0].row == 3);
+    CHECK(v[0].col == 10);
+}
+
+TEST_CASE("CSI DECSTBM — reset with 0;0", "[csi][decstbm]") {
+    auto const v = parse_sequence("\x1B[0;0r");
+    REQUIRE(v.size() == 1);
+    CHECK(v[0].type == action_type::set_scroll_region);
+    CHECK(v[0].row == 0);
+    CHECK(v[0].col == 0);
+}
+
+TEST_CASE("CSI DECSTBM — no params emits defaults (0, 0)", "[csi][decstbm]") {
+    auto const v = parse_sequence("\x1B[r");
+    REQUIRE(v.size() == 1);
+    CHECK(v[0].type == action_type::set_scroll_region);
+    // split_params returns [0] for empty buffer; row=0, col=0
+    CHECK(v[0].row == 0);
+    CHECK(v[0].col == 0);
+}
+
+TEST_CASE("CSI DECSTBM — top only, bottom defaults to 0", "[csi][decstbm]") {
+    auto const v = parse_sequence("\x1B[5;r");
+    REQUIRE(v.size() == 1);
+    CHECK(v[0].type == action_type::set_scroll_region);
+    CHECK(v[0].row == 5);
+    CHECK(v[0].col == 0);
+}
+
+TEST_CASE("CSI DECSTBM — bottom only", "[csi][decstbm]") {
+    auto const v = parse_sequence("\x1B[;20r");
+    REQUIRE(v.size() == 1);
+    CHECK(v[0].type == action_type::set_scroll_region);
+    CHECK(v[0].row == 0);
+    CHECK(v[0].col == 20);
+}
+
+TEST_CASE("CSI DECSTBM — with intermediate byte after param", "[csi][decstbm]") {
+    auto const v = parse_sequence("\x1B[5;10 r");
+    REQUIRE(v.size() == 1);
+    CHECK(v[0].type == action_type::set_scroll_region);
+    CHECK(v[0].row == 5);
+    CHECK(v[0].col == 10);
+}
+
+// ===========================================================================
+// Task 13 — Parser recovery after new sequences
+// ===========================================================================
+
+TEST_CASE("CSI IL/DL/SU/SD/DECSTBM — parser returns to ground", "[csi][task13][recovery]") {
+    vt_parser p;
+    parse_sequence(p, "\x1B[L");
+    auto const v = p.parse('A');
+    REQUIRE(v.size() == 1);
+    CHECK(v[0].type == action_type::write_char);
+
+    parse_sequence(p, "\x1B[3M");
+    auto const v2 = p.parse('B');
+    REQUIRE(v2.size() == 1);
+    CHECK(v2[0].type == action_type::write_char);
+
+    parse_sequence(p, "\x1B[S");
+    auto const v3 = p.parse('C');
+    REQUIRE(v3.size() == 1);
+    CHECK(v3[0].type == action_type::write_char);
+
+    parse_sequence(p, "\x1B[2T");
+    auto const v4 = p.parse('D');
+    REQUIRE(v4.size() == 1);
+    CHECK(v4[0].type == action_type::write_char);
+
+    parse_sequence(p, "\x1B[1;24r");
+    auto const v5 = p.parse('E');
+    REQUIRE(v5.size() == 1);
+    CHECK(v5[0].type == action_type::write_char);
+}

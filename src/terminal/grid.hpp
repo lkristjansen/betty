@@ -64,7 +64,35 @@ public:
 
   // Shift all rows up by one, clearing the bottom row.
   // Cursor row is unchanged (caller adjusts if needed).
+  // Respects scroll region: only rows [scroll_top_, scroll_bottom_] shift.
   void scroll_up();
+
+  // --- Scroll region (DECSTBM) ---------------------------------------------
+
+  // Set the scrolling region (top and bottom margins, 1-based).
+  // CSI Ps ; Ps r.  If top >= bottom the call is ignored.
+  // A bottom of 0 resets to full screen.
+  void set_scroll_region(uint32_t top, uint32_t bottom);
+
+  // --- Line operations ------------------------------------------------------
+
+  // IL — insert n blank lines at cursor within the scroll region.
+  // Ignored if cursor is outside the scroll region.
+  // Cursor column is reset to 0.
+  void insert_lines(uint32_t n);
+
+  // DL — delete n lines at cursor within the scroll region.
+  // Ignored if cursor is outside the scroll region.
+  // Cursor column is reset to 0.
+  void delete_lines(uint32_t n);
+
+  // SU — scroll the scroll region up by n lines.
+  // If scroll_top_ == 0 (full screen), scrolled-off rows go into scrollback.
+  void scroll_page_up(uint32_t n);
+
+  // SD — scroll the scroll region down by n lines.
+  // Always inserts blank rows at top; no scrollback interaction.
+  void scroll_page_down(uint32_t n);
 
   // --- Scrollback -----------------------------------------------------------
 
@@ -126,6 +154,8 @@ private:
   uint32_t scrollback_head_ = 0;
   uint32_t scrollback_count_ = 0;
   uint32_t viewport_scroll_ = 0;  // 0 = following output; >0 = scrolled back
+  uint32_t scroll_top_ = 0;       // 0-based, inclusive
+  uint32_t scroll_bottom_ = 0;    // 0-based, inclusive
   std::vector<grid_cell> cells_;
   vt_parser parser_;
 

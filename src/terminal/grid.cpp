@@ -13,6 +13,7 @@ terminal_grid::terminal_grid(uint32_t cols, uint32_t rows)
   : cols_(cols)
   , rows_(rows)
   , total_capacity_rows_(rows + k_scrollback_max)
+  , scroll_bottom_(rows > 0 ? rows - 1 : 0)
   , cells_(static_cast<size_t>(cols) * total_capacity_rows_, grid_cell{}) {}
 
 // ===========================================================================
@@ -44,12 +45,13 @@ void terminal_grid::write_char(char32_t cp) {
   // Auto-wrap: if cursor is past the last column, move to next row.
   if (cursor_col_ >= cols_) {
     cursor_col_ = 0;
-    cursor_row_++;
 
-    // Scroll if past the last row.
-    if (cursor_row_ >= rows_) {
+    // Scroll if at the bottom margin of the scroll region.
+    if (cursor_row_ >= scroll_bottom_) {
       scroll_up();
-      cursor_row_ = rows_ - 1;
+      // cursor stays at scroll_bottom_
+    } else {
+      cursor_row_++;
     }
   }
 }
@@ -128,6 +130,21 @@ void terminal_grid::apply(action const& a) {
   case action_type::erase_line:
     erase_line(a.count);
     break;
+  case action_type::set_scroll_region:
+    set_scroll_region(a.row, a.col);
+    break;
+  case action_type::insert_lines:
+    insert_lines(a.count);
+    break;
+  case action_type::delete_lines:
+    delete_lines(a.count);
+    break;
+  case action_type::scroll_up_page:
+    scroll_page_up(a.count);
+    break;
+  case action_type::scroll_down_page:
+    scroll_page_down(a.count);
+    break;
   case action_type::set_window_title:
     if (on_window_title_) {
       on_window_title_(a.title);
@@ -142,11 +159,12 @@ void terminal_grid::apply(action const& a) {
 
 void terminal_grid::newline() {
   cursor_col_ = 0;
-  cursor_row_++;
 
-  if (cursor_row_ >= rows_) {
-    scroll_up();
-    cursor_row_ = rows_ - 1;
+  if (cursor_row_ >= scroll_bottom_) {
+    scroll_up();  // region-aware scroll
+    // cursor stays at scroll_bottom_
+  } else {
+    cursor_row_++;
   }
 }
 
@@ -159,36 +177,55 @@ void terminal_grid::carriage_return() {
 }
 
 // ===========================================================================
-// scroll_up — shift visible rows, preserving top row in scrollback
+// scroll_up — shift rows within the scroll region
 // ===========================================================================
 
 void terminal_grid::scroll_up() {
   if (rows_ == 0) return;
 
-  // 1. Absorb the current top visible row into scrollback.
-  //    The top visible row is at logical index scrollback_count_.
-  //    After incrementing scrollback_count_, that same physical row becomes
-  //    the newest scrollback row — no data copying needed.
-  if (scrollback_count_ < k_scrollback_max) {
-    scrollback_count_++;
-  } else {
-    // Buffer full: drop the oldest scrollback row by advancing the head.
-    scrollback_head_ = (scrollback_head_ + 1) % total_capacity_rows_;
-    // scrollback_count_ stays at k_scrollback_max.
+  // ── Full-screen case ─────────────────────────────────────────────────
+  // Use the efficient circular-buffer trick: increment scrollback_count_
+  // converts the old top visible row into a scrollback row without copies.
+  if (scroll_top_ == 0 && scroll_bottom_ == rows_ - 1) {
+    if (scrollback_count_ < k_scrollback_max) {
+      scrollback_count_++;
+    } else {
+      scrollback_head_ = (scrollback_head_ + 1) % total_capacity_rows_;
+    }
+
+    // Clear the new bottom visible row.
+    uint32_t const bottom_logical = scrollback_count_ + rows_ - 1;
+    uint32_t const bottom_phys = physical_index(bottom_logical);
+    size_t const offset = static_cast<size_t>(bottom_phys) * cols_;
+    std::fill_n(cells_.data() + offset, cols_, grid_cell{});
+
+    if (viewport_scroll_ > 0) {
+      viewport_scroll_ = std::min(viewport_scroll_ + 1, scrollback_count_);
+    }
+    return;
   }
 
-  // 2. Clear the new bottom visible row.
-  //    The bottom visible row is at logical index scrollback_count_ + rows_ - 1.
-  uint32_t const bottom_logical = scrollback_count_ + rows_ - 1;
+  // ── Sub-region case ──────────────────────────────────────────────────
+  // Manually shift rows [scroll_top_+1 .. scroll_bottom_] up by 1.
+  // No scrollback interaction — the scrolled-off row is lost.
+  uint32_t const region_height = scroll_bottom_ - scroll_top_ + 1;
+  if (region_height == 0) return;
+
+  for (uint32_t r = scroll_top_; r < scroll_bottom_; ++r) {
+    uint32_t const src_logical = scrollback_count_ + r + 1;
+    uint32_t const dst_logical = scrollback_count_ + r;
+    uint32_t const src_phys = physical_index(src_logical);
+    uint32_t const dst_phys = physical_index(dst_logical);
+    size_t const src_off = static_cast<size_t>(src_phys) * cols_;
+    size_t const dst_off = static_cast<size_t>(dst_phys) * cols_;
+    std::copy_n(cells_.data() + src_off, cols_, cells_.data() + dst_off);
+  }
+
+  // Clear the bottom row of the region.
+  uint32_t const bottom_logical = scrollback_count_ + scroll_bottom_;
   uint32_t const bottom_phys = physical_index(bottom_logical);
   size_t const offset = static_cast<size_t>(bottom_phys) * cols_;
   std::fill_n(cells_.data() + offset, cols_, grid_cell{});
-
-  // 3. If the user is scrolled back, auto-advance viewport_scroll_ so
-  //    the same content remains visible (the new row is added "below").
-  if (viewport_scroll_ > 0) {
-    viewport_scroll_ = std::min(viewport_scroll_ + 1, scrollback_count_);
-  }
 }
 
 // ===========================================================================
@@ -206,6 +243,187 @@ auto terminal_grid::scroll_viewport(int32_t delta) -> uint32_t {
     viewport_scroll_ = (viewport_scroll_ > decrement) ? viewport_scroll_ - decrement : 0;
   }
   return viewport_scroll_;
+}
+
+// ===========================================================================
+// set_scroll_region — DECSTBM (CSI Ps ; Ps r)
+// ===========================================================================
+
+void terminal_grid::set_scroll_region(uint32_t top, uint32_t bottom) {
+  if (rows_ == 0) return;
+
+  // Default: top = 1 if absent or 0.
+  if (top < 1) top = 1;
+
+  // bottom = 0 means "reset to full screen".
+  if (bottom < 1 || bottom > rows_) bottom = rows_;
+
+  // Clamp top to valid range.
+  if (top > rows_) top = rows_;
+
+  // If top >= bottom, the sequence should be ignored per VT100 spec.
+  if (top >= bottom) return;
+
+  // Convert to 0-based.
+  scroll_top_ = top - 1;
+  scroll_bottom_ = bottom - 1;
+
+  // Move cursor to home position.
+  cursor_row_ = 0;
+  cursor_col_ = 0;
+}
+
+// ===========================================================================
+// insert_lines — IL: insert n blank lines at cursor within scroll region
+// ===========================================================================
+
+void terminal_grid::insert_lines(uint32_t n) {
+  if (cols_ == 0 || rows_ == 0) return;
+  if (n == 0) return;
+
+  // Ignore if cursor is outside the scroll region.
+  if (cursor_row_ < scroll_top_ || cursor_row_ > scroll_bottom_) return;
+
+  // Clamp n to the space remaining within the region below the cursor.
+  uint32_t const space = scroll_bottom_ - cursor_row_ + 1;
+  if (n > space) n = space;
+
+  // Shift rows [cursor_row_ .. scroll_bottom_ - n] down by n.
+  // Work from bottom up to avoid overwriting.
+  for (uint32_t dst = scroll_bottom_; dst >= cursor_row_ + n; --dst) {
+    uint32_t const src = dst - n;
+    uint32_t const src_logical = scrollback_count_ + src;
+    uint32_t const dst_logical = scrollback_count_ + dst;
+    uint32_t const src_phys = physical_index(src_logical);
+    uint32_t const dst_phys = physical_index(dst_logical);
+    size_t const src_off = static_cast<size_t>(src_phys) * cols_;
+    size_t const dst_off = static_cast<size_t>(dst_phys) * cols_;
+    std::copy_n(cells_.data() + src_off, cols_, cells_.data() + dst_off);
+  }
+
+  // Fill the newly vacated rows with blank cells.
+  for (uint32_t r = cursor_row_; r < cursor_row_ + n && r <= scroll_bottom_; ++r) {
+    uint32_t const logical = scrollback_count_ + r;
+    uint32_t const phys = physical_index(logical);
+    size_t const offset = static_cast<size_t>(phys) * cols_;
+    std::fill_n(cells_.data() + offset, cols_, grid_cell{});
+  }
+
+  // Reset cursor column (VT100 spec).
+  cursor_col_ = 0;
+}
+
+// ===========================================================================
+// delete_lines — DL: delete n lines at cursor within scroll region
+// ===========================================================================
+
+void terminal_grid::delete_lines(uint32_t n) {
+  if (cols_ == 0 || rows_ == 0) return;
+  if (n == 0) return;
+
+  // Ignore if cursor is outside the scroll region.
+  if (cursor_row_ < scroll_top_ || cursor_row_ > scroll_bottom_) return;
+
+  // Clamp n to the space remaining within the region below the cursor.
+  uint32_t const space = scroll_bottom_ - cursor_row_ + 1;
+  if (n > space) n = space;
+
+  // Shift rows [cursor_row_ + n .. scroll_bottom_] up by n.
+  // Work from top down.
+  for (uint32_t dst = cursor_row_; dst + n <= scroll_bottom_; ++dst) {
+    uint32_t const src = dst + n;
+    uint32_t const src_logical = scrollback_count_ + src;
+    uint32_t const dst_logical = scrollback_count_ + dst;
+    uint32_t const src_phys = physical_index(src_logical);
+    uint32_t const dst_phys = physical_index(dst_logical);
+    size_t const src_off = static_cast<size_t>(src_phys) * cols_;
+    size_t const dst_off = static_cast<size_t>(dst_phys) * cols_;
+    std::copy_n(cells_.data() + src_off, cols_, cells_.data() + dst_off);
+  }
+
+  // Fill the newly vacated rows at the bottom of the region with blanks.
+  for (uint32_t r = scroll_bottom_ - n + 1; r <= scroll_bottom_; ++r) {
+    uint32_t const logical = scrollback_count_ + r;
+    uint32_t const phys = physical_index(logical);
+    size_t const offset = static_cast<size_t>(phys) * cols_;
+    std::fill_n(cells_.data() + offset, cols_, grid_cell{});
+  }
+
+  // Reset cursor column (VT100 spec).
+  cursor_col_ = 0;
+}
+
+// ===========================================================================
+// scroll_page_up — SU: scroll the scroll region up by n lines
+// ===========================================================================
+
+void terminal_grid::scroll_page_up(uint32_t n) {
+  if (cols_ == 0 || rows_ == 0) return;
+  if (n == 0) return;
+
+  uint32_t const region_height = scroll_bottom_ - scroll_top_ + 1;
+  if (n > region_height) n = region_height;
+
+  // Full-screen region: push rows into scrollback (via repeated scroll_up).
+  if (scroll_top_ == 0 && scroll_bottom_ == rows_ - 1) {
+    for (uint32_t i = 0; i < n; ++i) {
+      scroll_up();
+    }
+    return;
+  }
+
+  // Sub-region: manual shift, no scrollback interaction.
+  for (uint32_t r = scroll_top_; r + n <= scroll_bottom_; ++r) {
+    uint32_t const src_logical = scrollback_count_ + r + n;
+    uint32_t const dst_logical = scrollback_count_ + r;
+    uint32_t const src_phys = physical_index(src_logical);
+    uint32_t const dst_phys = physical_index(dst_logical);
+    size_t const src_off = static_cast<size_t>(src_phys) * cols_;
+    size_t const dst_off = static_cast<size_t>(dst_phys) * cols_;
+    std::copy_n(cells_.data() + src_off, cols_, cells_.data() + dst_off);
+  }
+
+  // Clear the bottom n rows of the region.
+  for (uint32_t r = scroll_bottom_ - n + 1; r <= scroll_bottom_; ++r) {
+    uint32_t const logical = scrollback_count_ + r;
+    uint32_t const phys = physical_index(logical);
+    size_t const offset = static_cast<size_t>(phys) * cols_;
+    std::fill_n(cells_.data() + offset, cols_, grid_cell{});
+  }
+}
+
+// ===========================================================================
+// scroll_page_down — SD: scroll the scroll region down by n lines
+// ===========================================================================
+
+void terminal_grid::scroll_page_down(uint32_t n) {
+  if (cols_ == 0 || rows_ == 0) return;
+  if (n == 0) return;
+
+  uint32_t const region_height = scroll_bottom_ - scroll_top_ + 1;
+  if (n > region_height) n = region_height;
+
+  // Shift rows [scroll_top_ .. scroll_bottom_ - n] down by n.
+  // Work from bottom up to avoid overwriting.
+  for (uint32_t dst = scroll_bottom_; dst >= scroll_top_ + n; --dst) {
+    uint32_t const src = dst - n;
+    uint32_t const src_logical = scrollback_count_ + src;
+    uint32_t const dst_logical = scrollback_count_ + dst;
+    uint32_t const src_phys = physical_index(src_logical);
+    uint32_t const dst_phys = physical_index(dst_logical);
+    size_t const src_off = static_cast<size_t>(src_phys) * cols_;
+    size_t const dst_off = static_cast<size_t>(dst_phys) * cols_;
+    std::copy_n(cells_.data() + src_off, cols_, cells_.data() + dst_off);
+  }
+
+  // Fill the top n rows of the region with blanks.
+  // No scrollback interaction.
+  for (uint32_t r = scroll_top_; r < scroll_top_ + n && r <= scroll_bottom_; ++r) {
+    uint32_t const logical = scrollback_count_ + r;
+    uint32_t const phys = physical_index(logical);
+    size_t const offset = static_cast<size_t>(phys) * cols_;
+    std::fill_n(cells_.data() + offset, cols_, grid_cell{});
+  }
 }
 
 // ===========================================================================
@@ -420,6 +638,10 @@ void terminal_grid::resize(uint32_t new_cols, uint32_t new_rows) {
   if (cursor_col_ >= cols_) cursor_col_ = cols_ > 0 ? cols_ - 1 : 0;
   if (cursor_row_ >= rows_) cursor_row_ = rows_ > 0 ? rows_ - 1 : 0;
   if (viewport_scroll_ > scrollback_count_) viewport_scroll_ = scrollback_count_;
+
+  // Reset scroll region to full screen on resize (matches real terminals).
+  scroll_top_ = 0;
+  scroll_bottom_ = rows_ > 0 ? rows_ - 1 : 0;
 
   // Reset saved cursor — it's stale after a resize.
   saved_cursor_row_ = 0;
