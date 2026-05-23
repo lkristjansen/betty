@@ -30,8 +30,8 @@ inline constexpr uint32_t k_indices_per_quad     = 6u;
 inline constexpr uint32_t k_max_vertices = k_max_glyphs_per_frame * k_vertices_per_quad;
 inline constexpr uint32_t k_max_indices  = k_max_glyphs_per_frame * k_indices_per_quad;
 inline constexpr uint32_t k_atlas_cols   = 16u;
-inline constexpr uint32_t k_atlas_rows   = 8u;
-inline constexpr uint32_t k_atlas_glyphs = 128u;  // ASCII 0–127
+inline constexpr uint32_t k_atlas_rows   = 16u;  // 8 regular + 8 italic
+inline constexpr uint32_t k_atlas_glyphs = 256u;  // ASCII 0–127, regular & italic
 inline constexpr uint32_t k_glyph_padding = 1u;   // px each side
 
 // ===========================================================================
@@ -145,6 +145,7 @@ struct glyph_renderer::impl {
   // Glyph atlas
   ComPtr<ID3D11Texture2D>          atlas_texture;
   ComPtr<ID3D11ShaderResourceView> atlas_srv;
+  ComPtr<IDWriteFontFace1>         font_face_italic;  // italic variant for slots 128–255
   uint32_t atlas_width  = 0;
   uint32_t atlas_height = 0;
   uint32_t slot_width   = 0;
@@ -436,6 +437,44 @@ auto make_glyph_renderer(d3d_device const& device, window_dimensions const& wind
   p->baseline_y = static_cast<float>(font_ascent) * k_font_size
                 / static_cast<float>(font_design_units_per_em);
 
+  // --- 3b. Get italic font face ---------------------------------------------
+  {
+    ComPtr<IDWriteFontCollection> font_collection;
+    hr = p->text_format->GetFontCollection(font_collection.GetAddressOf());
+    if (FAILED(hr)) return std::unexpected(make_hresult_error(hr));
+
+    UINT32 family_index = 0;
+    BOOL exists = FALSE;
+    hr = font_collection->FindFamilyName(L"Consolas", &family_index, &exists);
+    if (FAILED(hr)) return std::unexpected(make_hresult_error(hr));
+
+    if (exists) {
+      ComPtr<IDWriteFontFamily> font_family;
+      hr = font_collection->GetFontFamily(family_index, font_family.GetAddressOf());
+      if (FAILED(hr)) return std::unexpected(make_hresult_error(hr));
+
+      UINT32 const count = font_family->GetFontCount();
+      for (UINT32 i = 0; i < count; ++i) {
+        ComPtr<IDWriteFont> font;
+        hr = font_family->GetFont(i, font.GetAddressOf());
+        if (FAILED(hr)) continue;
+
+        if (font->GetStyle() == DWRITE_FONT_STYLE_ITALIC) {
+          ComPtr<IDWriteFontFace> face;
+          hr = font->CreateFontFace(face.GetAddressOf());
+          if (FAILED(hr)) continue;
+
+          hr = face.As(&p->font_face_italic);
+          if (SUCCEEDED(hr)) break;
+        }
+      }
+    }
+    // If no italic face found, fall back to regular font face.
+    if (!p->font_face_italic) {
+      p->font_face_italic = p->font_face;
+    }
+  }
+
   // --- 4. Determine atlas layout --------------------------------------------
   p->slot_width  = p->cell_width  + k_glyph_padding * 2;
   p->slot_height = p->cell_height + k_glyph_padding * 2;
@@ -472,34 +511,43 @@ auto make_glyph_renderer(d3d_device const& device, window_dimensions const& wind
     if (FAILED(hr)) return std::unexpected(make_hresult_error(hr));
   }
 
-  // --- 7. Rasterize glyphs (0x00–0x7F) -------------------------------------
+  // --- 7. Rasterize glyphs (0x00–0x7F regular + italic) --------------------
   {
     size_t const buf_pixels = static_cast<size_t>(p->atlas_width) * static_cast<size_t>(p->atlas_height);
     std::vector<uint8_t> staging_buffer(buf_pixels * 4, 0);
 
-    for (uint32_t cp = 0; cp < k_atlas_glyphs; ++cp) {
-      uint32_t col = cp % k_atlas_cols;
-      uint32_t row = cp / k_atlas_cols;
-      uint32_t slot_x = col * p->slot_width;
-      uint32_t slot_y = row * p->slot_height;
+    // Helper: rasterize one 128-glyph block at a given starting row.
+    auto rasterize_block = [&](IDWriteFontFace1* face, uint32_t base_row) {
+      for (uint32_t cp = 0; cp < 128; ++cp) {
+        uint32_t const slot_idx = cp + base_row * k_atlas_cols;
+        uint32_t const col = cp % k_atlas_cols;
+        uint32_t const row = base_row + cp / k_atlas_cols;
+        uint32_t const slot_x = col * p->slot_width;
+        uint32_t const slot_y = row * p->slot_height;
 
-      rasterize_glyph(p->dwrite_factory.Get(), p->font_face.Get(),
-                       k_font_size, cp,
-                       slot_x, slot_y,
-                       p->atlas_width,
-                       p->cell_width, p->cell_height,
-                       p->baseline_y,
-                       staging_buffer);
+        rasterize_glyph(p->dwrite_factory.Get(), face,
+                         k_font_size, cp,
+                         slot_x, slot_y,
+                         p->atlas_width,
+                         p->cell_width, p->cell_height,
+                         p->baseline_y,
+                         staging_buffer);
 
-      // Precompute UVs for this slot (content area, excluding padding).
-      auto& slot = p->glyph_slots[cp];
-      slot.atlas_x = static_cast<uint16_t>(slot_x);
-      slot.atlas_y = static_cast<uint16_t>(slot_y);
-      slot.u0 = static_cast<float>(slot_x + k_glyph_padding)              / static_cast<float>(p->atlas_width);
-      slot.v0 = static_cast<float>(slot_y + k_glyph_padding)              / static_cast<float>(p->atlas_height);
-      slot.u1 = static_cast<float>(slot_x + k_glyph_padding + p->cell_width)  / static_cast<float>(p->atlas_width);
-      slot.v1 = static_cast<float>(slot_y + k_glyph_padding + p->cell_height) / static_cast<float>(p->atlas_height);
-    }
+        // Precompute UVs for this slot (content area, excluding padding).
+        auto& slot = p->glyph_slots[slot_idx];
+        slot.atlas_x = static_cast<uint16_t>(slot_x);
+        slot.atlas_y = static_cast<uint16_t>(slot_y);
+        slot.u0 = static_cast<float>(slot_x + k_glyph_padding)              / static_cast<float>(p->atlas_width);
+        slot.v0 = static_cast<float>(slot_y + k_glyph_padding)              / static_cast<float>(p->atlas_height);
+        slot.u1 = static_cast<float>(slot_x + k_glyph_padding + p->cell_width)  / static_cast<float>(p->atlas_width);
+        slot.v1 = static_cast<float>(slot_y + k_glyph_padding + p->cell_height) / static_cast<float>(p->atlas_height);
+      }
+    };
+
+    // Rows 0–7: regular font face.
+    rasterize_block(p->font_face.Get(), 0);
+    // Rows 8–15: italic font face.
+    rasterize_block(p->font_face_italic.Get(), 8);
 
     // Upload staging buffer to atlas texture.
     D3D11_BOX box{};
@@ -900,6 +948,14 @@ auto glyph_renderer::draw_grid(d3d_device const& device,
     ++quad_count;
   };
 
+  // Attribute bit constants (mirror terminal::cell_attr).
+  constexpr uint8_t k_attr_bold          = 1 << 0;
+  constexpr uint8_t k_attr_italic        = 1 << 1;
+  constexpr uint8_t k_attr_faint         = 1 << 2;
+  constexpr uint8_t k_attr_underline     = 1 << 3;
+  constexpr uint8_t k_attr_strikethrough = 1 << 4;
+  constexpr uint8_t k_attr_reverse       = 1 << 5;
+
   // Only draw the cursor if it lies within the visible area.
   bool const cursor_visible =
       cursor.row < draw_rows && cursor.col < draw_cols;
@@ -920,51 +976,68 @@ auto glyph_renderer::draw_grid(d3d_device const& device,
       bool const is_cursor =
         cursor_visible && row == cursor.row && col == cursor.col;
 
-      if (is_cursor) {
-        // Reverse video: bg quad in fg colour, glyph in bg colour.
-        float const nr = static_cast<float>(cell.fg.r) / 255.0f;
-        float const ng = static_cast<float>(cell.fg.g) / 255.0f;
-        float const nb = static_cast<float>(cell.fg.b) / 255.0f;
-        emit_quad(x0, y0, x1, y1, -1.0f, 0.0f, -1.0f, 0.0f, nr, ng, nb);
+      // Resolve effective reverse: cell SGR reverse XOR cursor.
+      // The cursor already swaps fg/bg, so if both are active they cancel.
+      bool const cell_reverse = (cell.attr & k_attr_reverse) != 0;
+      bool const effective_reverse = cell_reverse != is_cursor;
 
-        // If the cell has a character, draw it in the bg colour.
-        char32_t const cp = cell.codepoint;
-        if (cp != U' ' && cp != 0) {
-          unsigned char glyph =
-            (cp <= 127) ? static_cast<unsigned char>(cp)
-                          : static_cast<unsigned char>('?');
-          auto& slot = impl_->glyph_slots[glyph];
-          float const cr = static_cast<float>(cell.bg.r) / 255.0f;
-          float const cg = static_cast<float>(cell.bg.g) / 255.0f;
-          float const cb = static_cast<float>(cell.bg.b) / 255.0f;
-          emit_quad(x0, y0, x1, y1, slot.u0, slot.v0, slot.u1, slot.v1,
-                     cr, cg, cb);
+      // Determine fg/bg colours, swapping if reverse is effective.
+      auto const& fg_src = effective_reverse ? cell.bg : cell.fg;
+      auto const& bg_src = effective_reverse ? cell.fg : cell.bg;
+
+      float const br = static_cast<float>(bg_src.r) / 255.0f;
+      float const bgg = static_cast<float>(bg_src.g) / 255.0f;
+      float const bb = static_cast<float>(bg_src.b) / 255.0f;
+
+      // Faint reduces glyph intensity by 50%. Background is unaffected.
+      float const intensity = (cell.attr & k_attr_faint) ? 0.5f : 1.0f;
+      float const fr = static_cast<float>(fg_src.r) / 255.0f * intensity;
+      float const fg_f = static_cast<float>(fg_src.g) / 255.0f * intensity;
+      float const fb = static_cast<float>(fg_src.b) / 255.0f * intensity;
+
+      // Background quad — always emitted.
+      emit_quad(x0, y0, x1, y1,
+                -1.0f, 0.0f, -1.0f, 0.0f,
+                br, bgg, bb);
+
+      // Foreground glyph — only if the cell is not a space.
+      char32_t const cp = cell.codepoint;
+      if (cp != U' ' && cp != 0) {
+        unsigned char glyph =
+          (cp <= 127) ? static_cast<unsigned char>(cp)
+                        : static_cast<unsigned char>('?');
+
+        // Italic uses slots 128–255 (rows 8–15 in the atlas).
+        uint32_t const slot_idx =
+            glyph + ((cell.attr & k_attr_italic) ? 128u : 0u);
+        auto& slot = impl_->glyph_slots[slot_idx];
+
+        emit_quad(x0, y0, x1, y1, slot.u0, slot.v0, slot.u1, slot.v1,
+                   fr, fg_f, fb);
+
+        // Bold: synthetic double-draw with 1px horizontal offset.
+        if (cell.attr & k_attr_bold) {
+          emit_quad(x0 + 1.0f, y0, x1 + 1.0f, y1,
+                     slot.u0, slot.v0, slot.u1, slot.v1,
+                     fr, fg_f, fb);
         }
-      } else {
-        // Background quad — always emitted.
-        {
-          float const nr = static_cast<float>(cell.bg.r) / 255.0f;
-          float const ng = static_cast<float>(cell.bg.g) / 255.0f;
-          float const nb = static_cast<float>(cell.bg.b) / 255.0f;
-          // Negative u signals the pixel shader to skip atlas sampling.
-          emit_quad(x0, y0, x1, y1, -1.0f, 0.0f, -1.0f, 0.0f, nr, ng, nb);
-        }
+      }
 
-        // Foreground glyph — only if the cell is not a space.
-        char32_t const cp = cell.codepoint;
-        if (cp != U' ' && cp != 0) {
-          unsigned char glyph =
-            (cp <= 127) ? static_cast<unsigned char>(cp)
-                          : static_cast<unsigned char>('?');
+      // Underline: thin solid quad at cell bottom.
+      if (cell.attr & k_attr_underline) {
+        float const uy0 = y1 - 2.0f;
+        emit_quad(x0, uy0, x1, y1,
+                  -1.0f, 0.0f, -1.0f, 0.0f,
+                  fr, fg_f, fb);
+      }
 
-          auto& slot = impl_->glyph_slots[glyph];
-          float const nr = static_cast<float>(cell.fg.r) / 255.0f;
-          float const ng = static_cast<float>(cell.fg.g) / 255.0f;
-          float const nb = static_cast<float>(cell.fg.b) / 255.0f;
-
-          emit_quad(x0, y0, x1, y1, slot.u0, slot.v0, slot.u1, slot.v1,
-                     nr, ng, nb);
-        }
+      // Strikethrough: thin solid quad at ~40% from top.
+      if (cell.attr & k_attr_strikethrough) {
+        float const sy0 = y0 + static_cast<float>(impl_->cell_height) * 0.4f;
+        float const sy1 = sy0 + 2.0f;
+        emit_quad(x0, sy0, x1, sy1,
+                  -1.0f, 0.0f, -1.0f, 0.0f,
+                  fr, fg_f, fb);
       }
     }
   }

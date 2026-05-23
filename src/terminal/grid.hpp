@@ -18,7 +18,7 @@ struct grid_cell {
   char32_t codepoint = U' ';         // default: space
   rgb_color fg = default_fg();       // foreground colour
   rgb_color bg = default_bg();       // background colour
-  // Future (Task 12): bold, italic, underline, strikethrough flags
+  cell_attr attr = cell_attr::none;  // text attributes (bold, italic, etc.)
 };
 
 // ===========================================================================
@@ -139,6 +139,7 @@ private:
   // Current SGR state — applied to each cell on write_char.
   rgb_color current_fg_ = default_fg();
   rgb_color current_bg_ = default_bg();
+  cell_attr current_attr_ = cell_attr::none;
 
   // --- Erase helpers (Task 8) ----------------------------------------------
 

@@ -81,6 +81,10 @@ auto vt_parser::dispatch(char const final_byte) -> std::vector<action> {
     auto const params = split_params(param_buffer_);
     size_t i = 0;
 
+    // Accumulate attribute changes across the full sequence.
+    uint8_t pending_on  = 0;  // attributes to turn ON  (cell_attr bitmask)
+    uint8_t pending_off = 0;  // attributes to turn OFF
+
     auto consume_38_48 = [&](bool is_bg) {
       if (i + 1 >= params.size()) return;
       uint32_t const mode = params[i + 1];
@@ -144,11 +148,66 @@ auto vt_parser::dispatch(char const final_byte) -> std::vector<action> {
         actions.push_back(action{.type = action_type::sgr_set_bg,
                                   .color = default_bg()});
         ++i;
+      // ── Attribute SGR codes ────────────────────────────────────
+      } else if (n == 1) {
+        // Bold on — also clears faint (mutually exclusive).
+        pending_on  |= static_cast<uint8_t>(cell_attr::bold);
+        pending_off |= static_cast<uint8_t>(cell_attr::faint);
+        ++i;
+      } else if (n == 2) {
+        // Faint on — also clears bold.
+        pending_on  |= static_cast<uint8_t>(cell_attr::faint);
+        pending_off |= static_cast<uint8_t>(cell_attr::bold);
+        ++i;
+      } else if (n == 3) {
+        pending_on |= static_cast<uint8_t>(cell_attr::italic);
+        ++i;
+      } else if (n == 4) {
+        pending_on |= static_cast<uint8_t>(cell_attr::underline);
+        ++i;
+      } else if (n == 7) {
+        pending_on |= static_cast<uint8_t>(cell_attr::reverse);
+        ++i;
+      } else if (n == 9) {
+        pending_on |= static_cast<uint8_t>(cell_attr::strikethrough);
+        ++i;
+      } else if (n == 22) {
+        // Normal intensity — clears both bold and faint.
+        pending_off |= static_cast<uint8_t>(cell_attr::bold);
+        pending_off |= static_cast<uint8_t>(cell_attr::faint);
+        ++i;
+      } else if (n == 23) {
+        pending_off |= static_cast<uint8_t>(cell_attr::italic);
+        ++i;
+      } else if (n == 24) {
+        pending_off |= static_cast<uint8_t>(cell_attr::underline);
+        ++i;
+      } else if (n == 27) {
+        pending_off |= static_cast<uint8_t>(cell_attr::reverse);
+        ++i;
+      } else if (n == 29) {
+        pending_off |= static_cast<uint8_t>(cell_attr::strikethrough);
+        ++i;
       } else {
-        // Non-colour SGR (1-9, 21-29, etc.) — silently ignore (for Task 12).
+        // Other SGR (5,6,8,21,25,28, etc.) — silently ignore.
         ++i;
       }
     }
+
+    // Emit accumulated attribute changes.
+    if (pending_on != 0) {
+      actions.push_back(action{
+        .type = action_type::sgr_set_attr,
+        .count = pending_on
+      });
+    }
+    if (pending_off != 0) {
+      actions.push_back(action{
+        .type = action_type::sgr_clear_attr,
+        .count = pending_off
+      });
+    }
+
     return actions;
   }
 

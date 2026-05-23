@@ -8,6 +8,33 @@
 namespace betty::terminal {
 
 // ===========================================================================
+// cell_attr — text attribute bitmask (bold, italic, etc.)
+// ===========================================================================
+
+enum class cell_attr : uint8_t {
+  none          = 0,
+  bold          = 1 << 0,
+  italic        = 1 << 1,
+  faint         = 1 << 2,
+  underline     = 1 << 3,
+  strikethrough = 1 << 4,
+  reverse       = 1 << 5,
+};
+
+inline constexpr auto operator|(cell_attr a, cell_attr b) -> cell_attr {
+  return static_cast<cell_attr>(static_cast<uint8_t>(a) | static_cast<uint8_t>(b));
+}
+inline constexpr auto operator|=(cell_attr& a, cell_attr b) -> cell_attr& {
+  a = a | b; return a;
+}
+inline constexpr auto operator&(cell_attr a, cell_attr b) -> cell_attr {
+  return static_cast<cell_attr>(static_cast<uint8_t>(a) & static_cast<uint8_t>(b));
+}
+inline constexpr auto operator~(cell_attr a) -> cell_attr {
+  return static_cast<cell_attr>(~static_cast<uint8_t>(a));
+}
+
+// ===========================================================================
 // rgb_color — packed 8-bit-per-channel colour + flags
 // ===========================================================================
 
@@ -84,6 +111,8 @@ enum class action_type : uint8_t {
   sgr_reset,          // reset fg/bg to defaults (SGR 0)
   sgr_set_fg,         // set foreground colour
   sgr_set_bg,         // set background colour
+  sgr_set_attr,       // turn ON a bitmask of attributes (payload in action::count)
+  sgr_clear_attr,     // turn OFF a bitmask of attributes (payload in action::count)
   erase_display,      // ED: clear cells in display (mode in action::count)
   erase_line,         // EL: clear cells in current line (mode in action::count)
   set_window_title,   // OSC 0/1/2 — set window title

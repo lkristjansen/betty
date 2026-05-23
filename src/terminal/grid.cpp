@@ -36,6 +36,7 @@ void terminal_grid::write_char(char32_t cp) {
     cell.codepoint = cp;
     cell.fg = current_fg_;
     cell.bg = current_bg_;
+    cell.attr = current_attr_;
   }
 
   cursor_col_++;
@@ -107,12 +108,19 @@ void terminal_grid::apply(action const& a) {
   case action_type::sgr_reset:
     current_fg_ = default_fg();
     current_bg_ = default_bg();
+    current_attr_ = cell_attr::none;
     break;
   case action_type::sgr_set_fg:
     current_fg_ = a.color;
     break;
   case action_type::sgr_set_bg:
     current_bg_ = a.color;
+    break;
+  case action_type::sgr_set_attr:
+    current_attr_ = current_attr_ | static_cast<cell_attr>(a.count);
+    break;
+  case action_type::sgr_clear_attr:
+    current_attr_ = current_attr_ & ~static_cast<cell_attr>(a.count);
     break;
   case action_type::erase_display:
     erase_display(a.count);
@@ -321,6 +329,7 @@ auto terminal_grid::render_cells() -> std::span<const platform::render_cell> {
       auto& dst = render_cache_[dst_offset + c];
 
       dst.codepoint = src.codepoint;
+      dst.attr = static_cast<uint8_t>(src.attr);
 
       if (src.fg.flags & 1) {
         dst.fg = {k_default_fg_color.r, k_default_fg_color.g, k_default_fg_color.b};
