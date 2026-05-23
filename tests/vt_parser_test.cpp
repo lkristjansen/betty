@@ -819,3 +819,86 @@ TEST_CASE("CSI IL/DL/SU/SD/DECSTBM — parser returns to ground", "[csi][task13]
     REQUIRE(v5.size() == 1);
     CHECK(v5[0].type == action_type::write_char);
 }
+
+// ===========================================================================
+// Task 14 — ICH (Insert Characters): CSI Ps @
+// ===========================================================================
+
+TEST_CASE("CSI ICH — explicit count", "[csi][task14][ich]") {
+    auto const v = parse_sequence("\x1B[3@");
+    REQUIRE(v.size() == 1);
+    CHECK(v[0].type == action_type::insert_chars);
+    CHECK(v[0].count == 3);
+}
+
+TEST_CASE("CSI ICH — no params defaults to 1", "[csi][task14][ich]") {
+    auto const v = parse_sequence("\x1B[@");
+    REQUIRE(v.size() == 1);
+    CHECK(v[0].type == action_type::insert_chars);
+    CHECK(v[0].count == 1);
+}
+
+TEST_CASE("CSI ICH — zero count defaults to 1", "[csi][task14][ich]") {
+    auto const v = parse_sequence("\x1B[0@");
+    REQUIRE(v.size() == 1);
+    CHECK(v[0].type == action_type::insert_chars);
+    CHECK(v[0].count == 1);
+}
+
+// ===========================================================================
+// Task 14 — DCH (Delete Characters): CSI Ps P
+// ===========================================================================
+
+TEST_CASE("CSI DCH — explicit count", "[csi][task14][dch]") {
+    auto const v = parse_sequence("\x1B[2P");
+    REQUIRE(v.size() == 1);
+    CHECK(v[0].type == action_type::delete_chars);
+    CHECK(v[0].count == 2);
+}
+
+TEST_CASE("CSI DCH — no params defaults to 1", "[csi][task14][dch]") {
+    auto const v = parse_sequence("\x1B[P");
+    REQUIRE(v.size() == 1);
+    CHECK(v[0].type == action_type::delete_chars);
+    CHECK(v[0].count == 1);
+}
+
+// ===========================================================================
+// Task 14 — ECH (Erase Characters): CSI Ps X
+// ===========================================================================
+
+TEST_CASE("CSI ECH — explicit count", "[csi][task14][ech]") {
+    auto const v = parse_sequence("\x1B[5X");
+    REQUIRE(v.size() == 1);
+    CHECK(v[0].type == action_type::erase_chars);
+    CHECK(v[0].count == 5);
+}
+
+TEST_CASE("CSI ECH — no params defaults to 1", "[csi][task14][ech]") {
+    auto const v = parse_sequence("\x1B[X");
+    REQUIRE(v.size() == 1);
+    CHECK(v[0].type == action_type::erase_chars);
+    CHECK(v[0].count == 1);
+}
+
+// ===========================================================================
+// Task 14 — Parser recovery after ICH/DCH/ECH
+// ===========================================================================
+
+TEST_CASE("CSI ICH/DCH/ECH — parser returns to ground", "[csi][task14][recovery]") {
+    vt_parser p;
+    parse_sequence(p, "\x1B[3@");
+    auto const v = p.parse('A');
+    REQUIRE(v.size() == 1);
+    CHECK(v[0].type == action_type::write_char);
+
+    parse_sequence(p, "\x1B[2P");
+    auto const v2 = p.parse('B');
+    REQUIRE(v2.size() == 1);
+    CHECK(v2[0].type == action_type::write_char);
+
+    parse_sequence(p, "\x1B[5X");
+    auto const v3 = p.parse('C');
+    REQUIRE(v3.size() == 1);
+    CHECK(v3[0].type == action_type::write_char);
+}

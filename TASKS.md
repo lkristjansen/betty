@@ -70,7 +70,7 @@ Each task is a vertical slice: when completed, the user can launch `betty.exe` a
 
 ---
 
-### 9. Window title
+### 9. ✅ Window title
 **User sees:** The window title bar updates to reflect the shell's current working directory (e.g. `~`, `C:\Users\...`). Apps that set the title via escape sequences work.
 - Parse OSC 0 and OSC 2 (set window title)
 - Call `SetWindowText` to update the title bar
@@ -78,7 +78,7 @@ Each task is a vertical slice: when completed, the user can launch `betty.exe` a
 
 ---
 
-### 10. Window resizing
+### 10. ✅ Window resizing
 **User sees:** Dragging the window edge reflows the terminal content. Text wraps to the new column count. Shell commands like `ls` re-layout to fill the new width.
 - Handle `WM_SIZE` to detect client area changes
 - Recompute rows and columns from new client size and font metrics
@@ -87,7 +87,7 @@ Each task is a vertical slice: when completed, the user can launch `betty.exe` a
 
 ---
 
-### 11. Scrollback
+### 11. ✅ Scrollback
 **User sees:** Pressing Ctrl+Shift+Up scrolls back through previous output. Ctrl+Shift+Down scrolls forward. New output does not steal the view when scrolled away from the bottom. Returning to the bottom resumes following output.
 - Fixed scrollback buffer (10,000 lines)
 - Move lines from the main grid into scrollback when they scroll off-screen
@@ -97,7 +97,7 @@ Each task is a vertical slice: when completed, the user can launch `betty.exe` a
 
 ---
 
-### 12. Text attributes
+### 12. ✅ Text attributes
 **User sees:** `git diff` shows bold commit hashes. Italic comments appear in code. Underlined links are visible. Strikethrough text renders in applicable apps.
 - Parse SGR bold, italic, faint, underline, strikethrough, reverse video
 - Render each attribute correctly via DirectWrite (font weight, style, underline, strikethrough)
@@ -105,7 +105,7 @@ Each task is a vertical slice: when completed, the user can launch `betty.exe` a
 
 ---
 
-### 13. Line operations
+### 13. ✅ Line operations
 **User sees:** Terminal apps that insert or delete lines (e.g. `top`, `htop`, progress bars) work correctly. Scrolling regions behave as expected.
 - Parse IL (Insert Lines), DL (Delete Lines)
 - Parse SU (Scroll Up), SD (Scroll Down)
@@ -113,7 +113,7 @@ Each task is a vertical slice: when completed, the user can launch `betty.exe` a
 
 ---
 
-### 14. Character operations
+### 14. ✅ Character operations
 **User sees:** Inline editing in the shell works correctly — inserting text shifts characters right, deleting characters pulls them left. Cursor stays in the correct position.
 - Parse ICH (Insert Characters), DCH (Delete Characters)
 - Shift characters within a row

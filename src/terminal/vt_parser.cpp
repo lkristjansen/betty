@@ -286,6 +286,36 @@ auto vt_parser::dispatch(char const final_byte) -> std::vector<action> {
     }};
   }
 
+  // ── ICH: Insert Characters ──────────────────────────────────────────
+  if (final_byte == '@') {
+    auto const params = split_params(param_buffer_);
+    uint32_t const count = (params.size() > 0 && params[0] > 0) ? params[0] : 1;
+    return {action{
+      .type = action_type::insert_chars,
+      .count = count
+    }};
+  }
+
+  // ── DCH: Delete Characters ──────────────────────────────────────────
+  if (final_byte == 'P') {
+    auto const params = split_params(param_buffer_);
+    uint32_t const count = (params.size() > 0 && params[0] > 0) ? params[0] : 1;
+    return {action{
+      .type = action_type::delete_chars,
+      .count = count
+    }};
+  }
+
+  // ── ECH: Erase Characters ────────────────────────────────────────────
+  if (final_byte == 'X') {
+    auto const params = split_params(param_buffer_);
+    uint32_t const count = (params.size() > 0 && params[0] > 0) ? params[0] : 1;
+    return {action{
+      .type = action_type::erase_chars,
+      .count = count
+    }};
+  }
+
   // ── Cursor movement (existing) ───────────────────────────────────────
   auto const [p1, p2] = parse_params();
 

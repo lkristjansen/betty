@@ -1491,3 +1491,241 @@ TEST_CASE("Grid — integration DECSTBM + newline via write_bytes", "[grid][scro
     CHECK(g.cell(1, 0).codepoint == U'r');
     CHECK(g.cell(1, 1).codepoint == U'2');
 }
+
+// ===========================================================================
+// Task 14 — ICH (Insert Characters)
+// ===========================================================================
+
+TEST_CASE("Grid — ICH inserts blanks and shifts cells right", "[grid][task14][ich]") {
+    terminal_grid g(5, 3);
+    // Fill row 0 with "ABCDE".
+    g.write_bytes("ABCDE");
+
+    // Move cursor to col 1.
+    action mv;
+    mv.type = action_type::move_cursor;
+    mv.row = 0; mv.col = 1;
+    g.apply(mv);
+
+    // Insert 2 blank cells.
+    g.insert_chars(2);
+
+    // Row should be: A . . B C  (D, E lost)
+    CHECK(g.cell(0, 0).codepoint == U'A');
+    CHECK(g.cell(0, 1).codepoint == U' ');
+    CHECK(g.cell(0, 2).codepoint == U' ');
+    CHECK(g.cell(0, 3).codepoint == U'B');
+    CHECK(g.cell(0, 4).codepoint == U'C');
+    // Cursor unchanged.
+    CHECK(g.cursor_col() == 1);
+    CHECK(g.cursor_row() == 0);
+}
+
+TEST_CASE("Grid — ICH count clamped to remaining columns", "[grid][task14][ich]") {
+    terminal_grid g(5, 3);
+    g.write_bytes("ABCDE");
+
+    action mv;
+    mv.type = action_type::move_cursor;
+    mv.row = 0; mv.col = 3;
+    g.apply(mv);
+
+    // Only 2 columns remain. Request 10.
+    g.insert_chars(10);
+
+    // Everything from col 3 onward should be blank.
+    CHECK(g.cell(0, 0).codepoint == U'A');
+    CHECK(g.cell(0, 1).codepoint == U'B');
+    CHECK(g.cell(0, 2).codepoint == U'C');
+    CHECK(g.cell(0, 3).codepoint == U' ');
+    CHECK(g.cell(0, 4).codepoint == U' ');
+    // Cursor unchanged.
+    CHECK(g.cursor_col() == 3);
+}
+
+TEST_CASE("Grid — ICH at last column blanks that cell", "[grid][task14][ich]") {
+    terminal_grid g(5, 3);
+    g.write_bytes("ABCDE");
+
+    action mv;
+    mv.type = action_type::move_cursor;
+    mv.row = 0; mv.col = 4;
+    g.apply(mv);
+
+    g.insert_chars(1);
+
+    // Only cell 4 is blanked (E shifted right off the edge).
+    CHECK(g.cell(0, 0).codepoint == U'A');
+    CHECK(g.cell(0, 1).codepoint == U'B');
+    CHECK(g.cell(0, 2).codepoint == U'C');
+    CHECK(g.cell(0, 3).codepoint == U'D');
+    CHECK(g.cell(0, 4).codepoint == U' ');
+    CHECK(g.cursor_col() == 4);
+}
+
+TEST_CASE("Grid — ICH on zero-size grid does nothing", "[grid][task14][ich]") {
+    terminal_grid g(0, 0);
+    // Should not crash.
+    g.insert_chars(3);
+    CHECK(g.cols() == 0);
+    CHECK(g.rows() == 0);
+}
+
+TEST_CASE("Grid — ICH cursor unchanged", "[grid][task14][ich]") {
+    terminal_grid g(10, 5);
+    action mv;
+    mv.type = action_type::move_cursor;
+    mv.row = 2; mv.col = 3;
+    g.apply(mv);
+
+    g.insert_chars(2);
+
+    CHECK(g.cursor_col() == 3);
+    CHECK(g.cursor_row() == 2);
+}
+
+// ===========================================================================
+// Task 14 — DCH (Delete Characters)
+// ===========================================================================
+
+TEST_CASE("Grid — DCH deletes cells and shifts left", "[grid][task14][dch]") {
+    terminal_grid g(5, 3);
+    // Fill row 0 with "ABCDE".
+    g.write_bytes("ABCDE");
+
+    // Move cursor to col 1.
+    action mv;
+    mv.type = action_type::move_cursor;
+    mv.row = 0; mv.col = 1;
+    g.apply(mv);
+
+    // Delete 2 cells.
+    g.delete_chars(2);
+
+    // Row should be: A D E . .
+    CHECK(g.cell(0, 0).codepoint == U'A');
+    CHECK(g.cell(0, 1).codepoint == U'D');
+    CHECK(g.cell(0, 2).codepoint == U'E');
+    CHECK(g.cell(0, 3).codepoint == U' ');
+    CHECK(g.cell(0, 4).codepoint == U' ');
+    // Cursor unchanged.
+    CHECK(g.cursor_col() == 1);
+    CHECK(g.cursor_row() == 0);
+}
+
+TEST_CASE("Grid — DCH count clamped to remaining columns", "[grid][task14][dch]") {
+    terminal_grid g(5, 3);
+    g.write_bytes("ABCDE");
+
+    action mv;
+    mv.type = action_type::move_cursor;
+    mv.row = 0; mv.col = 3;
+    g.apply(mv);
+
+    // Only 2 columns remain. Request 10.
+    g.delete_chars(10);
+
+    // Everything from col 3 onward should be blank.
+    CHECK(g.cell(0, 0).codepoint == U'A');
+    CHECK(g.cell(0, 1).codepoint == U'B');
+    CHECK(g.cell(0, 2).codepoint == U'C');
+    CHECK(g.cell(0, 3).codepoint == U' ');
+    CHECK(g.cell(0, 4).codepoint == U' ');
+    // Cursor unchanged.
+    CHECK(g.cursor_col() == 3);
+}
+
+TEST_CASE("Grid — DCH at last column blanks that cell", "[grid][task14][dch]") {
+    terminal_grid g(5, 3);
+    g.write_bytes("ABCDE");
+
+    action mv;
+    mv.type = action_type::move_cursor;
+    mv.row = 0; mv.col = 4;
+    g.apply(mv);
+
+    g.delete_chars(1);
+
+    // Only cell 4 is blanked (deleted, nothing to shift in).
+    CHECK(g.cell(0, 0).codepoint == U'A');
+    CHECK(g.cell(0, 1).codepoint == U'B');
+    CHECK(g.cell(0, 2).codepoint == U'C');
+    CHECK(g.cell(0, 3).codepoint == U'D');
+    CHECK(g.cell(0, 4).codepoint == U' ');
+    CHECK(g.cursor_col() == 4);
+}
+
+TEST_CASE("Grid — DCH cursor unchanged", "[grid][task14][dch]") {
+    terminal_grid g(10, 5);
+    action mv;
+    mv.type = action_type::move_cursor;
+    mv.row = 2; mv.col = 3;
+    g.apply(mv);
+
+    g.delete_chars(2);
+
+    CHECK(g.cursor_col() == 3);
+    CHECK(g.cursor_row() == 2);
+}
+
+// ===========================================================================
+// Task 14 — ECH (Erase Characters)
+// ===========================================================================
+
+TEST_CASE("Grid — ECH blanks cells in place", "[grid][task14][ech]") {
+    terminal_grid g(5, 3);
+    g.write_bytes("ABCDE");
+
+    action mv;
+    mv.type = action_type::move_cursor;
+    mv.row = 0; mv.col = 1;
+    g.apply(mv);
+
+    // Erase 3 cells.
+    g.erase_chars(3);
+
+    // Row should be: A . . . E
+    CHECK(g.cell(0, 0).codepoint == U'A');
+    CHECK(g.cell(0, 1).codepoint == U' ');
+    CHECK(g.cell(0, 2).codepoint == U' ');
+    CHECK(g.cell(0, 3).codepoint == U' ');
+    CHECK(g.cell(0, 4).codepoint == U'E');
+    // Cursor unchanged.
+    CHECK(g.cursor_col() == 1);
+    CHECK(g.cursor_row() == 0);
+}
+
+TEST_CASE("Grid — ECH count clamped to remaining columns", "[grid][task14][ech]") {
+    terminal_grid g(5, 3);
+    g.write_bytes("ABCDE");
+
+    action mv;
+    mv.type = action_type::move_cursor;
+    mv.row = 0; mv.col = 3;
+    g.apply(mv);
+
+    // Only 2 columns remain. Request 10.
+    g.erase_chars(10);
+
+    // Everything from col 3 onward should be blank.
+    CHECK(g.cell(0, 0).codepoint == U'A');
+    CHECK(g.cell(0, 1).codepoint == U'B');
+    CHECK(g.cell(0, 2).codepoint == U'C');
+    CHECK(g.cell(0, 3).codepoint == U' ');
+    CHECK(g.cell(0, 4).codepoint == U' ');
+    // Cursor unchanged.
+    CHECK(g.cursor_col() == 3);
+}
+
+TEST_CASE("Grid — ECH cursor unchanged", "[grid][task14][ech]") {
+    terminal_grid g(10, 5);
+    action mv;
+    mv.type = action_type::move_cursor;
+    mv.row = 2; mv.col = 3;
+    g.apply(mv);
+
+    g.erase_chars(3);
+
+    CHECK(g.cursor_col() == 3);
+    CHECK(g.cursor_row() == 2);
+}

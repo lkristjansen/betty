@@ -117,6 +117,9 @@ enum class action_type : uint8_t {
   erase_line,         // EL: clear cells in current line (mode in action::count)
   insert_lines,       // IL: insert n blank lines at cursor (count)
   delete_lines,       // DL: delete n lines at cursor (count)
+  insert_chars,       // ICH: CSI Ps @ — insert n blank cells at cursor, shift right
+  delete_chars,       // DCH: CSI Ps P — delete n cells at cursor, shift left
+  erase_chars,        // ECH: CSI Ps X — overwrite n cells at cursor with blanks
   scroll_up_page,     // SU: scroll up within scroll region (count lines)
   scroll_down_page,   // SD: scroll down within scroll region (count lines)
   set_scroll_region,  // DECSTBM: set top/bottom scroll margins (row, col, 1-based)

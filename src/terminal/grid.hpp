@@ -86,6 +86,20 @@ public:
   // Cursor column is reset to 0.
   void delete_lines(uint32_t n);
 
+  // --- Character operations (Task 14) --------------------------------------
+
+  // ICH — insert n blank cells at cursor, shifting the row right.
+  // Cells shifted past the right edge are lost. Cursor is unchanged.
+  void insert_chars(uint32_t n);
+
+  // DCH — delete n cells at cursor, shifting the row left.
+  // Blank cells fill the vacated positions on the right. Cursor is unchanged.
+  void delete_chars(uint32_t n);
+
+  // ECH — overwrite n cells at cursor with blank cells (no shifting).
+  // Cursor is unchanged.
+  void erase_chars(uint32_t n);
+
   // SU — scroll the scroll region up by n lines.
   // If scroll_top_ == 0 (full screen), scrolled-off rows go into scrollback.
   void scroll_page_up(uint32_t n);

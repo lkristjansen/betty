@@ -139,6 +139,15 @@ void terminal_grid::apply(action const& a) {
   case action_type::delete_lines:
     delete_lines(a.count);
     break;
+  case action_type::insert_chars:
+    insert_chars(a.count);
+    break;
+  case action_type::delete_chars:
+    delete_chars(a.count);
+    break;
+  case action_type::erase_chars:
+    erase_chars(a.count);
+    break;
   case action_type::scroll_up_page:
     scroll_page_up(a.count);
     break;
@@ -351,6 +360,88 @@ void terminal_grid::delete_lines(uint32_t n) {
 
   // Reset cursor column (VT100 spec).
   cursor_col_ = 0;
+}
+
+// ===========================================================================
+// insert_chars — ICH: insert n blank cells at cursor, shift row right
+// ===========================================================================
+
+void terminal_grid::insert_chars(uint32_t n) {
+  if (cols_ == 0 || rows_ == 0) return;
+  if (n == 0) return;
+
+  // Clamp n to remaining columns.
+  uint32_t const space = cols_ - cursor_col_;
+  if (n > space) n = space;
+  if (n == 0) return;
+
+  uint32_t const logical = scrollback_count_ + cursor_row_;
+  uint32_t const phys = physical_index(logical);
+  size_t const offset = static_cast<size_t>(phys) * cols_;
+
+  // Shift cells right-to-left to avoid overwriting.
+  for (uint32_t c = cols_ - 1; c >= cursor_col_ + n; --c) {
+    cells_[offset + c] = cells_[offset + c - n];
+  }
+
+  // Fill the n vacated positions with blank cells.
+  for (uint32_t c = cursor_col_; c < cursor_col_ + n && c < cols_; ++c) {
+    cells_[offset + c] = grid_cell{};
+  }
+  // Cursor is unchanged.
+}
+
+// ===========================================================================
+// delete_chars — DCH: delete n cells at cursor, shift row left
+// ===========================================================================
+
+void terminal_grid::delete_chars(uint32_t n) {
+  if (cols_ == 0 || rows_ == 0) return;
+  if (n == 0) return;
+
+  // Clamp n to remaining columns.
+  uint32_t const space = cols_ - cursor_col_;
+  if (n > space) n = space;
+  if (n == 0) return;
+
+  uint32_t const logical = scrollback_count_ + cursor_row_;
+  uint32_t const phys = physical_index(logical);
+  size_t const offset = static_cast<size_t>(phys) * cols_;
+
+  // Shift cells left-to-right.
+  for (uint32_t c = cursor_col_; c + n < cols_; ++c) {
+    cells_[offset + c] = cells_[offset + c + n];
+  }
+
+  // Fill the n vacated positions at the right edge with blank cells.
+  for (uint32_t c = cols_ - n; c < cols_; ++c) {
+    cells_[offset + c] = grid_cell{};
+  }
+  // Cursor is unchanged.
+}
+
+// ===========================================================================
+// erase_chars — ECH: overwrite n cells at cursor with blanks (no shift)
+// ===========================================================================
+
+void terminal_grid::erase_chars(uint32_t n) {
+  if (cols_ == 0 || rows_ == 0) return;
+  if (n == 0) return;
+
+  // Clamp n to remaining columns.
+  uint32_t const space = cols_ - cursor_col_;
+  if (n > space) n = space;
+  if (n == 0) return;
+
+  uint32_t const logical = scrollback_count_ + cursor_row_;
+  uint32_t const phys = physical_index(logical);
+  size_t const offset = static_cast<size_t>(phys) * cols_;
+
+  // Overwrite n cells with blank cells.
+  for (uint32_t c = cursor_col_; c < cursor_col_ + n && c < cols_; ++c) {
+    cells_[offset + c] = grid_cell{};
+  }
+  // Cursor is unchanged.
 }
 
 // ===========================================================================
