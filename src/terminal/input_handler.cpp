@@ -11,10 +11,6 @@ namespace {
 // CSI (Control Sequence Introducer) prefix.
 inline constexpr std::string_view k_csi = "\x1B[";
 
-auto ansi_csi(char suffix) -> std::string {
-  return std::string(k_csi) + suffix;
-}
-
 auto ansi_csi(char const* suffix) -> std::string {
   return std::string(k_csi) + suffix;
 }

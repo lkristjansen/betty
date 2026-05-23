@@ -11,8 +11,9 @@ target_link_libraries(betty_tests PRIVATE
 
 target_compile_features(betty_tests PRIVATE cxx_std_23)
 
-if(MSVC)
-    target_compile_options(betty_tests PRIVATE /W4 /WX /utf-8)
-endif()
+target_compile_options(betty_tests PRIVATE
+  $<$<CXX_COMPILER_ID:MSVC>:/W4;/WX;/utf-8>
+  $<$<CXX_COMPILER_ID:Clang>:-Wall;-Wextra;-Werror>
+)
 
 add_test(test betty_tests)

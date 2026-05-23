@@ -6,17 +6,19 @@ target_include_directories(betty PRIVATE ${CMAKE_CURRENT_SOURCE_DIR})
 target_link_libraries(betty PRIVATE platform terminal)
 target_compile_features(betty PRIVATE cxx_std_23)
 
-if(MSVC)
-    target_compile_options(betty PRIVATE /W4 /WX /utf-8)
-endif()
+target_compile_options(betty PRIVATE
+  $<$<CXX_COMPILER_ID:MSVC>:/W4;/WX;/utf-8>
+  $<$<CXX_COMPILER_ID:Clang>:-Wall;-Wextra;-Werror>
+)
 set_target_properties(betty PROPERTIES
     WIN32_EXECUTABLE TRUE
 )
 
 # Use main() as entry point even with WINDOWS subsystem (no console window).
-if(MSVC)
-    target_link_options(betty PRIVATE /ENTRY:mainCRTStartup)
-endif()
+target_link_options(betty PRIVATE
+  $<$<CXX_COMPILER_ID:MSVC>:/ENTRY:mainCRTStartup>
+  $<$<CXX_COMPILER_ID:Clang>:-Wl,/entry:mainCRTStartup>
+)
 
 # Install
 install(TARGETS betty RUNTIME DESTINATION .)

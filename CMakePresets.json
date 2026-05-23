@@ -4,20 +4,22 @@
         {
             "name": "debug",
             "displayName": "Debug",
-            "generator": "Visual Studio 18 2026",
+            "generator": "Ninja",
             "binaryDir": "${sourceDir}/build/debug",
             "cacheVariables": {
-                "CMAKE_SYSTEM_VERSION": "10.0.19041.0",
+                "CMAKE_CXX_COMPILER": "clang++",
+                "CMAKE_BUILD_TYPE": "Debug",
                 "BUILD_TESTING": "ON"
             }
         },
         {
             "name": "release",
             "displayName": "Release",
-            "generator": "Visual Studio 18 2026",
+            "generator": "Ninja",
             "binaryDir": "${sourceDir}/build/release",
             "cacheVariables": {
-                "CMAKE_SYSTEM_VERSION": "10.0.19041.0",
+                "CMAKE_CXX_COMPILER": "clang++",
+                "CMAKE_BUILD_TYPE": "Release",
                 "BUILD_TESTING": "ON"
             }
         }
@@ -26,28 +28,24 @@
         {
             "name": "debug",
             "displayName": "Build Debug",
-            "configurePreset": "debug",
-            "configuration": "Debug"
+            "configurePreset": "debug"
         },
         {
             "name": "release",
             "displayName": "Build Release",
-            "configurePreset": "release",
-            "configuration": "Release"
+            "configurePreset": "release"
         }
     ],
     "packagePresets": [
         {
             "name": "debug",
             "displayName": "Package Debug",
-            "configurePreset": "debug",
-            "configurations": ["Debug"]
+            "configurePreset": "debug"
         },
         {
             "name": "release",
             "displayName": "Package Release",
-            "configurePreset": "release",
-            "configurations": ["Release"]
+            "configurePreset": "release"
         }
     ],
     "testPresets": [
@@ -55,7 +53,6 @@
             "name": "debug",
             "displayName": "Test Debug",
             "configurePreset": "debug",
-            "configuration": "Debug",
             "output": {
                 "outputOnFailure": true
             }
@@ -64,7 +61,6 @@
             "name": "release",
             "displayName": "Test Release",
             "configurePreset": "release",
-            "configuration": "Release",
             "output": {
                 "outputOnFailure": true
             }
@@ -73,7 +69,6 @@
             "name": "debug-verbose",
             "displayName": "Test Debug (Verbose)",
             "configurePreset": "debug",
-            "configuration": "Debug",
             "output": {
                 "verbosity": "extra",
                 "outputOnFailure": true
@@ -83,7 +78,6 @@
             "name": "release-verbose",
             "displayName": "Test Release (Verbose)",
             "configurePreset": "release",
-            "configuration": "Release",
             "output": {
                 "verbosity": "extra",
                 "outputOnFailure": true
