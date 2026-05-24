@@ -40,10 +40,18 @@ inline constexpr uint32_t k_glyph_padding = 1u;   // px each side
 // Vertex and constant-buffer layouts
 // ===========================================================================
 
+// Discriminator for pixel shader texture selection.
+// Must match the #define constants in k_pixel_shader_src.
+enum class atlas_kind : uint32_t {
+  none        = 0,  // background — solid colour, no texture sample
+  static_atlas = 1,  // pre-baked ASCII atlas (slots 0–255)
+  dyn_atlas    = 2,  // dynamic atlas for non-ASCII codepoints
+};
+
 struct glyph_vertex {
-  float x, y, u, v; // pixel position + UV (top-left origin)
-  float r, g, b;    // colour (0–1, pre-normalized)
-  float pad;        // alignment to 32 bytes
+  float    x, y, u, v; // pixel position + UV (top-left origin)
+  float    r, g, b;    // colour (0–1, pre-normalized)
+  uint32_t tex_id;     // atlas_kind discriminator (replaces old pad field)
 };
 static_assert(sizeof(glyph_vertex) == 8 * sizeof(float),
               "glyph_vertex must be 32 bytes for D3D11_INPUT_ELEMENT_DESC");
@@ -85,12 +93,14 @@ struct VS_INPUT {
   float2 position : POSITION;
   float2 uv       : TEXCOORD;
   float3 color    : COLOR;
+  uint   tex_id   : TEXCOORD1;
 };
 
 struct VS_OUTPUT {
   float4 position : SV_POSITION;
   float2 uv       : TEXCOORD;
   float3 color    : COLOR;
+  uint   tex_id   : TEXCOORD1;
 };
 
 VS_OUTPUT main(VS_INPUT input) {
@@ -102,11 +112,16 @@ VS_OUTPUT main(VS_INPUT input) {
   output.position.zw = float2(0.0, 1.0);
   output.uv = input.uv;
   output.color = input.color;
+  output.tex_id = input.tex_id;
   return output;
 }
 )";
 
 const char* k_pixel_shader_src = R"(
+#define ATLAS_KIND_NONE         0u
+#define ATLAS_KIND_STATIC_ATLAS 1u
+#define ATLAS_KIND_DYN_ATLAS    2u
+
 Texture2D<float4> glyph_atlas : register(t0);
 Texture2D<float4> dyn_atlas   : register(t1);
 SamplerState linear_sampler  : register(s0);
@@ -115,22 +130,24 @@ struct VS_OUTPUT {
   float4 position : SV_POSITION;
   float2 uv       : TEXCOORD;
   float3 color    : COLOR;
+  uint   tex_id   : TEXCOORD1;
 };
 
 float4 main(VS_OUTPUT input) : SV_TARGET {
-  if (input.uv.x < 0.0) {
-    // Background quad: solid colour (no texture sample).
-    return float4(input.color, 1.0);
+  switch (input.tex_id) {
+    case ATLAS_KIND_NONE: {
+      // Background quad: solid colour (no texture sample).
+      return float4(input.color, 1.0);
+    }
+    case ATLAS_KIND_DYN_ATLAS: {
+      float alpha = dyn_atlas.Sample(linear_sampler, input.uv).a;
+      return float4(input.color * alpha, alpha);
+    }
+    default: { // ATLAS_KIND_STATIC_ATLAS
+      float alpha = glyph_atlas.Sample(linear_sampler, input.uv).a;
+      return float4(input.color * alpha, alpha);
+    }
   }
-  if (input.uv.x >= 1.0) {
-    // Dynamic atlas: UV is stored as (real_u + 2.0, real_v).
-    float2 real_uv = float2(input.uv.x - 2.0, input.uv.y);
-    float alpha = dyn_atlas.Sample(linear_sampler, real_uv).a;
-    return float4(input.color * alpha, alpha);
-  }
-  // ASCII atlas.
-  float alpha = glyph_atlas.Sample(linear_sampler, input.uv).a;
-  return float4(input.color * alpha, alpha);
 }
 )";
 
@@ -671,9 +688,10 @@ auto make_glyph_renderer(d3d_device const& device, window_dimensions const& wind
   // --- 10. Create input layout ----------------------------------------------
   {
     D3D11_INPUT_ELEMENT_DESC layout[] = {
-      { "POSITION", 0, DXGI_FORMAT_R32G32_FLOAT,   0, 0,                             D3D11_INPUT_PER_VERTEX_DATA, 0 },
-      { "TEXCOORD", 0, DXGI_FORMAT_R32G32_FLOAT,   0, D3D11_APPEND_ALIGNED_ELEMENT,  D3D11_INPUT_PER_VERTEX_DATA, 0 },
-      { "COLOR",    0, DXGI_FORMAT_R32G32B32_FLOAT, 0, D3D11_APPEND_ALIGNED_ELEMENT,  D3D11_INPUT_PER_VERTEX_DATA, 0 },
+      { "POSITION",  0, DXGI_FORMAT_R32G32_FLOAT,   0, 0,                             D3D11_INPUT_PER_VERTEX_DATA, 0 },
+      { "TEXCOORD",  0, DXGI_FORMAT_R32G32_FLOAT,   0, D3D11_APPEND_ALIGNED_ELEMENT,  D3D11_INPUT_PER_VERTEX_DATA, 0 },
+      { "COLOR",     0, DXGI_FORMAT_R32G32B32_FLOAT, 0, D3D11_APPEND_ALIGNED_ELEMENT,  D3D11_INPUT_PER_VERTEX_DATA, 0 },
+      { "TEXCOORD",  1, DXGI_FORMAT_R32_UINT,        0, D3D11_APPEND_ALIGNED_ELEMENT,  D3D11_INPUT_PER_VERTEX_DATA, 0 },
     };
 
     hr = d3d_dev->CreateInputLayout(layout, ARRAYSIZE(layout),
@@ -812,6 +830,27 @@ auto make_glyph_renderer(d3d_device const& device, window_dimensions const& wind
 }
 
 // ===========================================================================
+// Shared vertex-write helper
+// ===========================================================================
+
+namespace {
+
+// Write four vertices for one textured glyph quad into the mapped buffer.
+// `quad_idx` is zero-based; the helper computes vertex indices [4*q, 4*q+3].
+inline void write_glyph_quad(glyph_vertex* vertices, uint32_t quad_idx,
+                              float x0, float y0, float x1, float y1,
+                              float u0, float v0, float u1, float v1,
+                              float r, float g, float b, uint32_t tex_id) {
+  uint32_t v = quad_idx * 4;
+  vertices[v + 0] = { x0, y0, u0, v0, r, g, b, tex_id };
+  vertices[v + 1] = { x1, y0, u1, v0, r, g, b, tex_id };
+  vertices[v + 2] = { x1, y1, u1, v1, r, g, b, tex_id };
+  vertices[v + 3] = { x0, y1, u0, v1, r, g, b, tex_id };
+}
+
+} // anonymous namespace
+
+// ===========================================================================
 // glyph_renderer::draw
 // ===========================================================================
 
@@ -846,11 +885,11 @@ auto glyph_renderer::draw(d3d_device const& device,
 
     // Quad vertices (top-left, top-right, bottom-right, bottom-left).
     // Default white colour — no per-glyph colour without a grid.
-    uint32_t v = quad_count * k_vertices_per_quad;
-    vertices[v + 0] = { x0, y0, slot.u0, slot.v0, 1.0f, 1.0f, 1.0f, 0 };
-    vertices[v + 1] = { x1, y0, slot.u1, slot.v0, 1.0f, 1.0f, 1.0f, 0 };
-    vertices[v + 2] = { x1, y1, slot.u1, slot.v1, 1.0f, 1.0f, 1.0f, 0 };
-    vertices[v + 3] = { x0, y1, slot.u0, slot.v1, 1.0f, 1.0f, 1.0f, 0 };
+    write_glyph_quad(vertices, quad_count,
+                     x0, y0, x1, y1,
+                     slot.u0, slot.v0, slot.u1, slot.v1,
+                     1.0f, 1.0f, 1.0f,
+                     static_cast<uint32_t>(atlas_kind::static_atlas));
 
     ++col;
     ++quad_count;
@@ -945,11 +984,11 @@ auto glyph_renderer::draw_text(d3d_device const& device,
       float const x1 = x0 + static_cast<float>(impl_->cell_width);
 
       // Quad vertices (top-left, top-right, bottom-right, bottom-left).
-      uint32_t v = quad_count * k_vertices_per_quad;
-      vertices[v + 0] = { x0, y0, slot.u0, slot.v0, 1.0f, 1.0f, 1.0f, 0 };
-      vertices[v + 1] = { x1, y0, slot.u1, slot.v0, 1.0f, 1.0f, 1.0f, 0 };
-      vertices[v + 2] = { x1, y1, slot.u1, slot.v1, 1.0f, 1.0f, 1.0f, 0 };
-      vertices[v + 3] = { x0, y1, slot.u0, slot.v1, 1.0f, 1.0f, 1.0f, 0 };
+      write_glyph_quad(vertices, quad_count,
+                       x0, y0, x1, y1,
+                       slot.u0, slot.v0, slot.u1, slot.v1,
+                       1.0f, 1.0f, 1.0f,
+                       static_cast<uint32_t>(atlas_kind::static_atlas));
 
       ++quad_count;
     }
@@ -1022,16 +1061,29 @@ auto glyph_renderer::draw_grid(d3d_device const& device,
   auto* vertices = static_cast<glyph_vertex*>(mapped.pData);
   uint32_t quad_count = 0;
 
-  // Helper: emit four vertices for a quad.
-  auto emit_quad = [&](float x0, float y0, float x1, float y1,
-                        float u0, float v0, float u1, float v1,
-                        float r, float g, float b) {
+  // Helper: emit a background quad (solid colour, no texture).
+  auto emit_bg_quad = [&](float x0, float y0, float x1, float y1,
+                           float r, float g, float b) {
     if (quad_count >= k_max_glyphs_per_frame) return;
-    uint32_t v = quad_count * k_vertices_per_quad;
-    vertices[v + 0] = { x0, y0, u0, v0, r, g, b, 0 };
-    vertices[v + 1] = { x1, y0, u1, v0, r, g, b, 0 };
-    vertices[v + 2] = { x1, y1, u1, v1, r, g, b, 0 };
-    vertices[v + 3] = { x0, y1, u0, v1, r, g, b, 0 };
+    write_glyph_quad(vertices, quad_count,
+                     x0, y0, x1, y1,
+                     0.0f, 0.0f, 0.0f, 0.0f,
+                     r, g, b,
+                     static_cast<uint32_t>(atlas_kind::none));
+    ++quad_count;
+  };
+
+  // Helper: emit a textured glyph quad.
+  auto emit_glyph_quad = [&](float x0, float y0, float x1, float y1,
+                              float u0, float v0, float u1, float v1,
+                              float r, float g, float b,
+                              atlas_kind kind) {
+    if (quad_count >= k_max_glyphs_per_frame) return;
+    write_glyph_quad(vertices, quad_count,
+                     x0, y0, x1, y1,
+                     u0, v0, u1, v1,
+                     r, g, b,
+                     static_cast<uint32_t>(kind));
     ++quad_count;
   };
 
@@ -1094,9 +1146,7 @@ auto glyph_renderer::draw_grid(d3d_device const& device,
       float const fb = static_cast<float>(fg_src.b) / 255.0f * intensity;
 
       // Background quad — always emitted.
-      emit_quad(x0, y0, x1, y1,
-                -1.0f, 0.0f, -1.0f, 0.0f,
-                br, bgg, bb);
+      emit_bg_quad(x0, y0, x1, y1, br, bgg, bb);
 
       // Foreground glyph — only if the cell is not a space.
       char32_t const cp = cell.codepoint;
@@ -1109,34 +1159,30 @@ auto glyph_renderer::draw_grid(d3d_device const& device,
               glyph + ((cell.attr & k_attr_italic) ? 128u : 0u);
           auto& slot = impl_->glyph_slots[slot_idx];
 
-          emit_quad(x0, y0, x1, y1, slot.u0, slot.v0, slot.u1, slot.v1,
-                     fr, fg_f, fb);
+          emit_glyph_quad(x0, y0, x1, y1,
+                         slot.u0, slot.v0, slot.u1, slot.v1,
+                         fr, fg_f, fb, atlas_kind::static_atlas);
 
           // Bold: synthetic double-draw with 1px horizontal offset.
           if (cell.attr & k_attr_bold) {
-            emit_quad(x0 + 1.0f, y0, x1 + 1.0f, y1,
-                       slot.u0, slot.v0, slot.u1, slot.v1,
-                       fr, fg_f, fb);
+            emit_glyph_quad(x0 + 1.0f, y0, x1 + 1.0f, y1,
+                           slot.u0, slot.v0, slot.u1, slot.v1,
+                           fr, fg_f, fb, atlas_kind::static_atlas);
           }
         } else {
           // Non-ASCII: look up in dynamic atlas.
           auto it = impl_->dyn_index_.find(cp);
           if (it != impl_->dyn_index_.end()) {
             auto& slot = impl_->dyn_glyph_slots[it->second];
-            // Dynamic atlas UVs are shifted by +2.0 in u to distinguish
-            // from ASCII atlas in the pixel shader.
-            float const du0 = slot.u0 + 2.0f;
-            float const dv0 = slot.v0;
-            float const du1 = slot.u1 + 2.0f;
-            float const dv1 = slot.v1;
 
-            emit_quad(x0, y0, x1, y1, du0, dv0, du1, dv1,
-                       fr, fg_f, fb);
+            emit_glyph_quad(x0, y0, x1, y1,
+                           slot.u0, slot.v0, slot.u1, slot.v1,
+                           fr, fg_f, fb, atlas_kind::dyn_atlas);
 
             if (cell.attr & k_attr_bold) {
-              emit_quad(x0 + 1.0f, y0, x1 + 1.0f, y1,
-                         du0, dv0, du1, dv1,
-                         fr, fg_f, fb);
+              emit_glyph_quad(x0 + 1.0f, y0, x1 + 1.0f, y1,
+                             slot.u0, slot.v0, slot.u1, slot.v1,
+                             fr, fg_f, fb, atlas_kind::dyn_atlas);
             }
           }
           // If glyph not in cache, silently skip (shouldn't happen after prepare).
@@ -1146,18 +1192,14 @@ auto glyph_renderer::draw_grid(d3d_device const& device,
       // Underline: thin solid quad at cell bottom.
       if (cell.attr & k_attr_underline) {
         float const uy0 = y1 - 2.0f;
-        emit_quad(x0, uy0, x1, y1,
-                  -1.0f, 0.0f, -1.0f, 0.0f,
-                  fr, fg_f, fb);
+        emit_bg_quad(x0, uy0, x1, y1, fr, fg_f, fb);
       }
 
       // Strikethrough: thin solid quad at ~40% from top.
       if (cell.attr & k_attr_strikethrough) {
         float const sy0 = y0 + static_cast<float>(impl_->cell_height) * 0.4f;
         float const sy1 = sy0 + 2.0f;
-        emit_quad(x0, sy0, x1, sy1,
-                  -1.0f, 0.0f, -1.0f, 0.0f,
-                  fr, fg_f, fb);
+        emit_bg_quad(x0, sy0, x1, sy1, fr, fg_f, fb);
       }
 
       // Advance column: 2 for wide, 1 for normal.
