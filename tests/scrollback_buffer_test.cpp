@@ -169,21 +169,12 @@ TEST_CASE("scrollback_buffer — resize smaller reflows rows", "[scrollback_buff
     }
 
     buf.resize(3, 2, 10);
-    // Row 0 should now be a b c (first 3 chars of old row 0)
-    // Row 1 should be d e (next 2 chars)
-    // Wait, that's only 2 visible rows and no scrollback. Let's trace:
-    // old total logical = 2. After resize, new_logical_idx:
-    // log_old=0: copy 3 cells (a,b,c) → new_phys=0, offset=0. new_logical_idx=1
-    //            copy 2 cells (d,e) → new_phys=1, offset=3. new_logical_idx=2
-    // log_old=1: copy 3 cells (f,g,h) → new_phys=0? No, new_logical_idx % new_capacity
-    //            new_capacity = 2+10=12. new_logical_idx=2, new_phys=2, offset=6
-    //            copy 2 cells (i,j) → new_logical_idx=3, new_phys=3, offset=9
-    // Total new_logical_idx = 4. new_rows = 2. excess = 2.
-    // scrollback_count = min(2, 10) = 2.
-    // visible_base_logical = 2. rendered_row(0) = logical 2 = new_phys 2 = "fgh"
-    // rendered_row(1) = logical 3 = new_phys 3 = "ij "
-    // scrollback row 0 = logical 0 = "abc"
-    // scrollback row 1 = logical 1 = "de "
+    // reflow_into splits each old row into ceil(5/3)=2 chunks:
+    // log_old=0: [a b c] at idx 0, [d e] at idx 1
+    // log_old=1: [f g h] at idx 2, [i j] at idx 3
+    // total_chunks=4 <= new_capacity(12), so nothing is discarded.
+    // new_scrollback_count = 4 - 2 = 2.
+    // visible rows = idx 2 [f g h], idx 3 [i j].
 
     CHECK(buf.cols() == 3);
     CHECK(buf.rows() == 2);
@@ -217,6 +208,56 @@ TEST_CASE("scrollback_buffer — resize clamps viewport_scroll", "[scrollback_bu
     (void)buf.scroll_viewport(2);
     buf.resize(3, 2, 10);
     CHECK(buf.viewport_scroll() <= buf.scrollback_count());
+}
+
+TEST_CASE("scrollback_buffer — resize extreme narrowing does not corrupt", "[scrollback_buffer]") {
+    scrollback_buffer buf(10, 5, 2);  // capacity = 7 rows
+    // Fill with distinctive data so corruption is detectable.
+    char32_t ch = U'A';
+    for (uint32_t r = 0; r < 5; ++r)
+        for (uint32_t c = 0; c < 10; ++c)
+            buf.active_row(r)[c] = grid_cell{ch++, {}, {}, cell_attr::none};
+
+    buf.resize(1, 1, 2);  // 10x5=50 cells -> at least 50 chunks, capacity=3
+
+    // Should not crash. Visible row should contain one of the last cells written.
+    CHECK(buf.cols() == 1);
+    CHECK(buf.rows() == 1);
+    CHECK(buf.scrollback_count() <= 2);
+    // Verify no data corruption: the visible row and scrollback rows should
+    // all be within the range of characters we wrote.
+    for (uint32_t r = 0; r < 1; ++r) {
+        auto row = buf.active_row(r);
+        CHECK(row[0].codepoint >= U'A');
+        CHECK(row[0].codepoint <= U'A' + 49);  // 50 cells total
+    }
+}
+
+TEST_CASE("scrollback_buffer — resize discards oldest rows on overflow", "[scrollback_buffer]") {
+    scrollback_buffer buf(4, 3, 1);  // capacity = 4 rows
+    // Row 0 (oldest): A B C D
+    for (uint32_t c = 0; c < 4; ++c)
+        buf.active_row(0)[c] = grid_cell{static_cast<char32_t>(U'A' + c), {}, {}, cell_attr::none};
+    // Row 1: E F G H
+    for (uint32_t c = 0; c < 4; ++c)
+        buf.active_row(1)[c] = grid_cell{static_cast<char32_t>(U'E' + c), {}, {}, cell_attr::none};
+    // Row 2 (newest): I J K L
+    for (uint32_t c = 0; c < 4; ++c)
+        buf.active_row(2)[c] = grid_cell{static_cast<char32_t>(U'I' + c), {}, {}, cell_attr::none};
+
+    // Resize to 1 col, 1 row. 3 old rows x 4 chunks = 12, capacity = 2.
+    // Only newest ~2 chunks survive -> newest row's first cells.
+    buf.resize(1, 1, 1);
+
+    CHECK(buf.cols() == 1);
+    CHECK(buf.rows() == 1);
+    // The oldest row data (A,B,C,D) should NOT appear.
+    // The visible content should come from the newest row (I,J,K,L).
+    auto visible = buf.active_row(0);
+    CHECK(visible[0].codepoint != U'A');
+    CHECK(visible[0].codepoint != U'B');
+    CHECK(visible[0].codepoint != U'C');
+    CHECK(visible[0].codepoint != U'D');
 }
 
 // ===========================================================================

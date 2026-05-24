@@ -37,6 +37,15 @@ public:
   [[nodiscard]] auto visible_base_logical() const noexcept -> uint32_t;
 
 private:
+  struct reflow_result {
+    std::vector<grid_cell> cells;
+    uint32_t scrollback_count;
+    uint32_t scrollback_head;
+  };
+
+  [[nodiscard]] auto reflow_into(uint32_t new_cols, uint32_t new_rows,
+                                 uint32_t new_max_scrollback) const -> reflow_result;
+
   uint32_t cols_ = 0;
   uint32_t rows_ = 0;
   uint32_t max_scrollback_ = 0;

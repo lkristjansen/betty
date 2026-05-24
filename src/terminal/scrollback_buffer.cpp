@@ -87,6 +87,65 @@ auto scrollback_buffer::scroll_viewport(int32_t delta) -> uint32_t {
   return viewport_scroll_;
 }
 
+// ===========================================================================
+// reflow_into
+//
+// Repacks old cells into a new column width by splitting each old row into
+// ceil(old_cols / new_cols) chunks.  Example: resizing 5 cols -> 3 cols
+// turns one old row [a b c d e] into two new rows [a b c] and [d e  ].
+//
+// When total_chunks exceeds new_capacity, the oldest chunks are silently
+// discarded so the new logical index never wraps past the end of new_cells.
+// ===========================================================================
+
+auto scrollback_buffer::reflow_into(uint32_t new_cols, uint32_t new_rows,
+                                    uint32_t new_max_scrollback) const -> reflow_result {
+  uint32_t const new_capacity = new_rows + new_max_scrollback;
+  std::vector<grid_cell> new_cells(
+      static_cast<size_t>(new_cols) * new_capacity, grid_cell{});
+
+  // Number of new chunks each old row produces when split across new columns.
+  uint32_t const chunks_per_old_row = (cols_ + new_cols - 1) / new_cols;
+
+  uint32_t const total_old_logical = scrollback_count_ + rows_;
+  uint32_t const total_chunks = total_old_logical * chunks_per_old_row;
+
+  // When total_chunks exceeds new_capacity, discard the oldest chunks
+  // so new_logical_idx never wraps past the end of new_cells.
+  // We skip at row granularity where possible, then offset into the first
+  // retained row for the remaining chunk-level discard.
+  uint32_t old_rows_to_skip = 0;
+  uint32_t first_chunk_offset = 0;
+  if (total_chunks > new_capacity) {
+    uint32_t const skip_chunks = total_chunks - new_capacity;
+    old_rows_to_skip = skip_chunks / chunks_per_old_row;
+    first_chunk_offset = skip_chunks % chunks_per_old_row;
+  }
+
+  uint32_t new_logical_idx = 0;
+  for (uint32_t log_old = old_rows_to_skip; log_old < total_old_logical; ++log_old) {
+    uint32_t const old_phys = physical_index(log_old);
+    size_t const old_offset = static_cast<size_t>(old_phys) * cols_;
+
+    uint32_t const start_c =
+        (log_old == old_rows_to_skip) ? first_chunk_offset * new_cols : 0;
+    for (uint32_t c = start_c;
+         c < cols_ && new_logical_idx < new_capacity;
+         c += new_cols) {
+      uint32_t const copy_count = std::min(new_cols, cols_ - c);
+      size_t const new_offset = static_cast<size_t>(new_logical_idx) * new_cols;
+      std::copy_n(cells_.data() + old_offset + c, copy_count,
+                  new_cells.data() + new_offset);
+      new_logical_idx++;
+    }
+  }
+
+  uint32_t const new_scrollback_count =
+      (new_logical_idx > new_rows) ? new_logical_idx - new_rows : 0;
+
+  return {std::move(new_cells), new_scrollback_count, 0};
+}
+
 void scrollback_buffer::resize(uint32_t new_cols, uint32_t new_rows, uint32_t new_max_scrollback) {
   if (new_cols == cols_ && new_rows == rows_ && new_max_scrollback == max_scrollback_) return;
 
@@ -103,46 +162,14 @@ void scrollback_buffer::resize(uint32_t new_cols, uint32_t new_rows, uint32_t ne
     return;
   }
 
-  uint32_t const new_capacity = new_rows + new_max_scrollback;
-  std::vector<grid_cell> new_cells(
-      static_cast<size_t>(new_cols) * new_capacity, grid_cell{});
-
-  // Extract all existing logical rows (scrollback + visible).
-  uint32_t const total_old_logical = scrollback_count_ + rows_;
-  uint32_t new_logical_idx = 0;
-
-  for (uint32_t log_old = 0; log_old < total_old_logical; ++log_old) {
-    uint32_t const old_phys = physical_index(log_old);
-    size_t const old_offset = static_cast<size_t>(old_phys) * cols_;
-
-    for (uint32_t c = 0; c < cols_; c += new_cols) {
-      uint32_t const copy_count = std::min(new_cols, cols_ - c);
-      uint32_t const new_phys = new_logical_idx % new_capacity;
-      size_t const new_offset = static_cast<size_t>(new_phys) * new_cols;
-      std::copy_n(cells_.data() + old_offset + c, copy_count,
-                  new_cells.data() + new_offset);
-      new_logical_idx++;
-    }
-  }
-
-  uint32_t new_scrollback_count = 0;
-  uint32_t new_scrollback_head = 0;
-
-  if (new_logical_idx > new_rows) {
-    uint32_t const excess = new_logical_idx - new_rows;
-    new_scrollback_count = std::min(excess, new_max_scrollback);
-    if (excess > new_max_scrollback) {
-      new_scrollback_head = (excess - new_max_scrollback) % new_capacity;
-    }
-  }
-
-  cells_ = std::move(new_cells);
-  scrollback_head_ = new_scrollback_head;
-  scrollback_count_ = new_scrollback_count;
+  auto result = reflow_into(new_cols, new_rows, new_max_scrollback);
+  cells_ = std::move(result.cells);
+  scrollback_head_ = result.scrollback_head;
+  scrollback_count_ = result.scrollback_count;
   cols_ = new_cols;
   rows_ = new_rows;
   max_scrollback_ = new_max_scrollback;
-  total_capacity_rows_ = new_capacity;
+  total_capacity_rows_ = new_rows + new_max_scrollback;
 
   if (viewport_scroll_ > scrollback_count_) {
     viewport_scroll_ = scrollback_count_;
