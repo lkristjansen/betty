@@ -1,5 +1,6 @@
 #pragma once
 #include <cstdint>
+#include <span>
 #include <string>
 #include <utility>
 #include <vector>
@@ -62,7 +63,8 @@ struct action {
 class vt_parser {
 public:
   // Feed one byte.  Returns zero or more actions for each complete sequence.
-  auto parse(unsigned char byte) -> std::vector<action>;
+  // The returned span refers to internal storage that is invalidated on the next call.
+  auto parse(unsigned char byte) -> std::span<const action>;
 
 private:
   enum class state : uint8_t {
@@ -77,13 +79,18 @@ private:
   };
 
   void reset_csi();
-  auto dispatch(char final_byte) -> std::vector<action>;
-  auto dispatch_osc() -> std::vector<action>;
+  void dispatch(char final_byte);
+  void dispatch_osc();
   auto parse_params() -> std::pair<uint32_t, uint32_t>;
+  auto split_params() -> std::span<const uint32_t>;
 
   state state_ = state::ground;
   std::string param_buffer_;  // collects CSI parameter bytes (digits, ';')
   std::string osc_buffer_;    // collects OSC string (max 1024 bytes)
+
+  // Reusable output buffers (avoid per-call heap allocations).
+  std::vector<action> output_;           // actions produced by the current parse()
+  std::vector<uint32_t> param_values_;   // split CSI parameter values
 
   // UTF-8 accumulation state.
   struct {

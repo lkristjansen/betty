@@ -12,7 +12,7 @@ static auto parse_sequence(vt_parser &p, std::string_view bytes)
     std::vector<action> result;
     for (auto const b : bytes) {
         auto v = p.parse(static_cast<unsigned char>(b));
-        if (!v.empty()) result = std::move(v);
+        if (!v.empty()) result.assign(v.begin(), v.end());
     }
     return result;
 }

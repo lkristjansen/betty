@@ -47,38 +47,39 @@ auto vt_parser::parse_params() -> std::pair<uint32_t, uint32_t> {
   return {p1, p2};
 }
 
-// Split semicolon-delimited parameter buffer into a vector of uint32_t.
+// Split semicolon-delimited parameter buffer into param_values_.
 // Empty tokens become 0 (ANSI convention: missing param = 0).
-static auto split_params(std::string_view s) -> std::vector<uint32_t> {
-  std::vector<uint32_t> result;
+// Returns a span over the internal param_values_ buffer.
+auto vt_parser::split_params() -> std::span<const uint32_t> {
+  std::string_view const s = param_buffer_;
+  param_values_.clear();
   size_t pos = 0;
   while (pos <= s.size()) {
     size_t const semi = s.find(';', pos);
     std::string_view const token = s.substr(pos, semi - pos);
     if (token.empty()) {
-      result.push_back(0);
+      param_values_.push_back(0);
     } else {
       uint32_t val = 0;
       auto [ptr, ec] = std::from_chars(token.data(), token.data() + token.size(), val);
-      result.push_back((ec == std::errc{}) ? val : 0);
+      param_values_.push_back((ec == std::errc{}) ? val : 0);
     }
     if (semi == std::string::npos) break;
     pos = semi + 1;
   }
   // Empty buffer → implicit 0 (ANSI default for SGR).
-  if (result.empty()) result.push_back(0);
-  return result;
+  if (param_values_.empty()) param_values_.push_back(0);
+  return param_values_;
 }
 
 // ===========================================================================
 // dispatch — produce actions from a CSI final byte + parameter buffer
 // ===========================================================================
 
-auto vt_parser::dispatch(char const final_byte) -> std::vector<action> {
+void vt_parser::dispatch(char const final_byte) {
   if (final_byte == 'm') {
     // ── SGR ────────────────────────────────────────────────────────────
-    std::vector<action> actions;
-    auto const params = split_params(param_buffer_);
+    auto const params = split_params();
     size_t i = 0;
 
     // Accumulate attribute changes across the full sequence.
@@ -90,7 +91,7 @@ auto vt_parser::dispatch(char const final_byte) -> std::vector<action> {
       uint32_t const mode = params[i + 1];
       if (mode == 2 && i + 4 < params.size()) {
         // 38;2;R;G;B  or  48;2;R;G;B
-        actions.push_back(action{
+        output_.push_back(action{
           .type = is_bg ? action_type::sgr_set_bg : action_type::sgr_set_fg,
           .color = {
             static_cast<uint8_t>(std::min(params[i + 2], 255u)),
@@ -102,7 +103,7 @@ auto vt_parser::dispatch(char const final_byte) -> std::vector<action> {
         i += 5;
       } else if (mode == 5 && i + 2 < params.size()) {
         // 38;5;N  or  48;5;N
-        actions.push_back(action{
+        output_.push_back(action{
           .type = is_bg ? action_type::sgr_set_bg : action_type::sgr_set_fg,
           .color = xterm_256_color(static_cast<uint8_t>(std::min(params[i + 2], 255u)))
         });
@@ -118,22 +119,22 @@ auto vt_parser::dispatch(char const final_byte) -> std::vector<action> {
 
       if (n == 0) {
         // Reset all.
-        actions.push_back(action{.type = action_type::sgr_reset});
+        output_.push_back(action{.type = action_type::sgr_reset});
         ++i;
       } else if (n >= 30 && n <= 37) {
-        actions.push_back(action{.type = action_type::sgr_set_fg,
+        output_.push_back(action{.type = action_type::sgr_set_fg,
                                   .color = catppuccin_palette[n - 30]});
         ++i;
       } else if (n >= 40 && n <= 47) {
-        actions.push_back(action{.type = action_type::sgr_set_bg,
+        output_.push_back(action{.type = action_type::sgr_set_bg,
                                   .color = catppuccin_palette[n - 40]});
         ++i;
       } else if (n >= 90 && n <= 97) {
-        actions.push_back(action{.type = action_type::sgr_set_fg,
+        output_.push_back(action{.type = action_type::sgr_set_fg,
                                   .color = catppuccin_palette[(n - 90) + 8]});
         ++i;
       } else if (n >= 100 && n <= 107) {
-        actions.push_back(action{.type = action_type::sgr_set_bg,
+        output_.push_back(action{.type = action_type::sgr_set_bg,
                                   .color = catppuccin_palette[(n - 100) + 8]});
         ++i;
       } else if (n == 38) {
@@ -141,11 +142,11 @@ auto vt_parser::dispatch(char const final_byte) -> std::vector<action> {
       } else if (n == 48) {
         consume_38_48(true);   // advances i
       } else if (n == 39) {
-        actions.push_back(action{.type = action_type::sgr_set_fg,
+        output_.push_back(action{.type = action_type::sgr_set_fg,
                                   .color = default_fg()});
         ++i;
       } else if (n == 49) {
-        actions.push_back(action{.type = action_type::sgr_set_bg,
+        output_.push_back(action{.type = action_type::sgr_set_bg,
                                   .color = default_bg()});
         ++i;
       // ── Attribute SGR codes ────────────────────────────────────
@@ -196,166 +197,173 @@ auto vt_parser::dispatch(char const final_byte) -> std::vector<action> {
 
     // Emit accumulated attribute changes.
     if (pending_on != 0) {
-      actions.push_back(action{
+      output_.push_back(action{
         .type = action_type::sgr_set_attr,
         .count = pending_on
       });
     }
     if (pending_off != 0) {
-      actions.push_back(action{
+      output_.push_back(action{
         .type = action_type::sgr_clear_attr,
         .count = pending_off
       });
     }
 
-    return actions;
+    return;
   }
 
   // ── ED: Erase in Display ────────────────────────────────────────────
   if (final_byte == 'J') {
-    // Default mode is 0 (unlike cursor moves which default to 1).
-    // split_params treats empty tokens as 0, which is correct for ED.
-    auto const params = split_params(param_buffer_);
+    auto const params = split_params();
     uint32_t const mode = params[0];
-    return {action{
+    output_.push_back(action{
       .type = action_type::erase_display,
       .count = mode
-    }};
+    });
+    return;
   }
 
   // ── EL: Erase in Line ───────────────────────────────────────────────
   if (final_byte == 'K') {
-    auto const params = split_params(param_buffer_);
+    auto const params = split_params();
     uint32_t const mode = params[0];
-    return {action{
+    output_.push_back(action{
       .type = action_type::erase_line,
       .count = mode
-    }};
+    });
+    return;
   }
 
   // ── IL: Insert Lines ────────────────────────────────────────────────
   if (final_byte == 'L') {
-    auto const params = split_params(param_buffer_);
+    auto const params = split_params();
     uint32_t const count = (params.size() > 0 && params[0] > 0) ? params[0] : 1;
-    return {action{
+    output_.push_back(action{
       .type = action_type::insert_lines,
       .count = count
-    }};
+    });
+    return;
   }
 
   // ── DL: Delete Lines ────────────────────────────────────────────────
   if (final_byte == 'M') {
-    auto const params = split_params(param_buffer_);
+    auto const params = split_params();
     uint32_t const count = (params.size() > 0 && params[0] > 0) ? params[0] : 1;
-    return {action{
+    output_.push_back(action{
       .type = action_type::delete_lines,
       .count = count
-    }};
+    });
+    return;
   }
 
   // ── SU: Scroll Up ───────────────────────────────────────────────────
   if (final_byte == 'S') {
-    auto const params = split_params(param_buffer_);
+    auto const params = split_params();
     uint32_t const count = (params.size() > 0 && params[0] > 0) ? params[0] : 1;
-    return {action{
+    output_.push_back(action{
       .type = action_type::scroll_up_page,
       .count = count
-    }};
+    });
+    return;
   }
 
   // ── SD: Scroll Down ─────────────────────────────────────────────────
   if (final_byte == 'T') {
-    auto const params = split_params(param_buffer_);
+    auto const params = split_params();
     uint32_t const count = (params.size() > 0 && params[0] > 0) ? params[0] : 1;
-    return {action{
+    output_.push_back(action{
       .type = action_type::scroll_down_page,
       .count = count
-    }};
+    });
+    return;
   }
 
   // ── DECSTBM: Set scrolling region ───────────────────────────────────
   if (final_byte == 'r') {
-    auto const params = split_params(param_buffer_);
-    // params are 1-based; 0 means "reset to full screen" (stored as 0).
+    auto const params = split_params();
     uint32_t const top = (params.size() > 0) ? params[0] : 1;
     uint32_t const bottom = (params.size() > 1) ? params[1] : 0;
-    return {action{
+    output_.push_back(action{
       .type = action_type::set_scroll_region,
       .row = top,
       .col = bottom
-    }};
+    });
+    return;
   }
 
   // ── ICH: Insert Characters ──────────────────────────────────────────
   if (final_byte == '@') {
-    auto const params = split_params(param_buffer_);
+    auto const params = split_params();
     uint32_t const count = (params.size() > 0 && params[0] > 0) ? params[0] : 1;
-    return {action{
+    output_.push_back(action{
       .type = action_type::insert_chars,
       .count = count
-    }};
+    });
+    return;
   }
 
   // ── DCH: Delete Characters ──────────────────────────────────────────
   if (final_byte == 'P') {
-    auto const params = split_params(param_buffer_);
+    auto const params = split_params();
     uint32_t const count = (params.size() > 0 && params[0] > 0) ? params[0] : 1;
-    return {action{
+    output_.push_back(action{
       .type = action_type::delete_chars,
       .count = count
-    }};
+    });
+    return;
   }
 
   // ── ECH: Erase Characters ────────────────────────────────────────────
   if (final_byte == 'X') {
-    auto const params = split_params(param_buffer_);
+    auto const params = split_params();
     uint32_t const count = (params.size() > 0 && params[0] > 0) ? params[0] : 1;
-    return {action{
+    output_.push_back(action{
       .type = action_type::erase_chars,
       .count = count
-    }};
+    });
+    return;
   }
 
-  // ── Cursor movement (existing) ───────────────────────────────────────
+  // ── Cursor movement ─────────────────────────────────────────────────
   auto const [p1, p2] = parse_params();
 
   switch (final_byte) {
-  case 'A': { // CUU — Cursor Up
-    return {action{
+  case 'A': // CUU — Cursor Up
+    output_.push_back(action{
       .type = action_type::move_cursor_up,
       .count = p1
-    }};
-  }
-  case 'B': { // CUD — Cursor Down
-    return {action{
+    });
+    return;
+  case 'B': // CUD — Cursor Down
+    output_.push_back(action{
       .type = action_type::move_cursor_down,
       .count = p1
-    }};
-  }
-  case 'C': { // CUF — Cursor Forward
-    return {action{
+    });
+    return;
+  case 'C': // CUF — Cursor Forward
+    output_.push_back(action{
       .type = action_type::move_cursor_forward,
       .count = p1
-    }};
-  }
-  case 'D': { // CUB — Cursor Back
-    return {action{
+    });
+    return;
+  case 'D': // CUB — Cursor Back
+    output_.push_back(action{
       .type = action_type::move_cursor_back,
       .count = p1
-    }};
-  }
+    });
+    return;
   case 'H':   // CUP — Cursor Position
   case 'f': { // HVP — Horizontal Vertical Position
-    return {action{
+    output_.push_back(action{
       .type = action_type::move_cursor,
-      // Convert from 1-based to 0-based.
       .row = (p1 > 0) ? p1 - 1 : 0,
       .col = (p2 > 0) ? p2 - 1 : 0
-    }};
+    });
+    return;
   }
   default:
     // Unrecognised final byte → discard the whole sequence.
-    return {};
+    return;
   }
 }
 
@@ -363,42 +371,43 @@ auto vt_parser::dispatch(char const final_byte) -> std::vector<action> {
 // dispatch_osc — produce an action from an OSC parameter string
 // ===========================================================================
 
-auto vt_parser::dispatch_osc() -> std::vector<action> {
+void vt_parser::dispatch_osc() {
   // Parse "Ps;Pt" format.
   auto const semi = osc_buffer_.find(';');
-  if (semi == std::string::npos) return {};  // malformed — no semicolon
+  if (semi == std::string::npos) return;  // malformed — no semicolon
 
   // Parse Ps (OSC number).
   uint32_t ps = 0;
   auto const ps_str = std::string_view(osc_buffer_).substr(0, semi);
   auto [ptr, ec] = std::from_chars(ps_str.data(), ps_str.data() + ps_str.size(), ps);
-  if (ec != std::errc{}) return {};  // non-numeric Ps — ignore
+  if (ec != std::errc{}) return;  // non-numeric Ps — ignore
 
   // Only OSC 0, 1, 2 are handled.
-  if (ps > 2) return {};
+  if (ps > 2) return;
 
   // Extract title text (Pt).
   std::string_view title(osc_buffer_.data() + semi + 1, osc_buffer_.size() - semi - 1);
 
   // Ignore empty title.
-  if (title.empty()) return {};
+  if (title.empty()) return;
 
   // Truncate to 255 characters.
   if (title.size() > 255) {
     title = title.substr(0, 255);
   }
 
-  return {action{
+  output_.push_back(action{
     .type = action_type::set_window_title,
     .title = std::string(title)
-  }};
+  });
 }
 
 // ===========================================================================
 // parse — state machine entry point
 // ===========================================================================
 
-auto vt_parser::parse(unsigned char const byte) -> std::vector<action> {
+auto vt_parser::parse(unsigned char const byte) -> std::span<const action> {
+  output_.clear();
   switch (state_) {
 
   // -------------------------------------------------------------------
@@ -407,22 +416,25 @@ auto vt_parser::parse(unsigned char const byte) -> std::vector<action> {
   case state::ground:
     switch (byte) {
     case '\r':
-      return {action{.type = action_type::carriage_return}};
+      output_.push_back(action{.type = action_type::carriage_return});
+      return output_;
     case '\n':
-      return {action{.type = action_type::newline}};
+      output_.push_back(action{.type = action_type::newline});
+      return output_;
     case 0x1B:   // ESC
       state_ = state::escape;
-      return {};
+      return output_;
     default:
       if (byte < 0x80) {
         // ASCII: printable (0x20–0x7E) or C0 control (ignore).
         if (byte >= 0x20) {
-          return {action{
+          output_.push_back(action{
             .type = action_type::write_char,
             .codepoint = static_cast<char32_t>(byte)
-          }};
+          });
+          return output_;
         }
-        return {};
+        return output_;
       }
       // byte >= 0x80 — UTF-8 multi-byte start
       if (byte >= 0xC0 && byte <= 0xF4) {
@@ -438,11 +450,11 @@ auto vt_parser::parse(unsigned char const byte) -> std::vector<action> {
           utf8_.codepoint = byte & 0x07u;
         }
         state_ = state::utf8_accum;
-        return {};
+        return output_;
       }
       // Stray continuation byte (0x80–0xBF) or invalid (0xF5–0xFF) —
       // silently ignore (don't emit anything).
-      return {};
+      return output_;
     }
 
   // -------------------------------------------------------------------
@@ -458,10 +470,11 @@ auto vt_parser::parse(unsigned char const byte) -> std::vector<action> {
     if ((byte & 0xC0u) != 0x80u) {
       // Invalid — abort sequence and emit replacement character.
       state_ = state::ground;
-      return {action{
+      output_.push_back(action{
         .type = action_type::write_char,
         .codepoint = 0xFFFDu
-      }};
+      });
+      return output_;
     }
     utf8_.codepoint = (utf8_.codepoint << 6) | (byte & 0x3Fu);
     utf8_.remaining--;
@@ -471,22 +484,26 @@ auto vt_parser::parse(unsigned char const byte) -> std::vector<action> {
       char32_t const cp = utf8_.codepoint;
       // Reject surrogates (U+D800–U+DFFF).
       if (cp >= 0xD800 && cp <= 0xDFFF) {
-        return {action{.type = action_type::write_char, .codepoint = 0xFFFDu}};
+        output_.push_back(action{.type = action_type::write_char, .codepoint = 0xFFFDu});
+        return output_;
       }
       // Reject overlong 2-byte sequences (codepoint < 0x80).
       if (cp < 0x80) {
-        return {action{.type = action_type::write_char, .codepoint = 0xFFFDu}};
+        output_.push_back(action{.type = action_type::write_char, .codepoint = 0xFFFDu});
+        return output_;
       }
       // Reject codepoints beyond Unicode range.
       if (cp > 0x10FFFF) {
-        return {action{.type = action_type::write_char, .codepoint = 0xFFFDu}};
+        output_.push_back(action{.type = action_type::write_char, .codepoint = 0xFFFDu});
+        return output_;
       }
-      return {action{
+      output_.push_back(action{
         .type = action_type::write_char,
         .codepoint = cp
-      }};
+      });
+      return output_;
     }
-    return {};
+    return output_;
 
   // -------------------------------------------------------------------
   // ESCAPE — just saw ESC
@@ -496,24 +513,26 @@ auto vt_parser::parse(unsigned char const byte) -> std::vector<action> {
     case '[':   // CSI introducer
       state_ = state::csi_entry;
       param_buffer_.clear();
-      return {};
+      return output_;
     case ']': { // OSC introducer
       state_ = state::osc;
       osc_buffer_.clear();
-      return {};
+      return output_;
     }
     case '7': { // DECSC — Save Cursor
       state_ = state::ground;
-      return {action{.type = action_type::save_cursor}};
+      output_.push_back(action{.type = action_type::save_cursor});
+      return output_;
     }
     case '8': { // DECRC — Restore Cursor
       state_ = state::ground;
-      return {action{.type = action_type::restore_cursor}};
+      output_.push_back(action{.type = action_type::restore_cursor});
+      return output_;
     }
     default:
       // Unknown escape sequence — discard.
       state_ = state::ground;
-      return {};
+      return output_;
     }
 
   // -------------------------------------------------------------------
@@ -526,13 +545,13 @@ auto vt_parser::parse(unsigned char const byte) -> std::vector<action> {
     } else if (byte >= 0x20 && byte <= 0x2F) {
       state_ = state::csi_intermediate;
     } else if (byte >= 0x40 && byte <= 0x7E) {
-      auto result = dispatch(static_cast<char>(byte));
+      dispatch(static_cast<char>(byte));
       reset_csi();
-      return result;
+      return output_;
     } else {
       reset_csi();  // invalid byte → discard CSI sequence
     }
-    return {};
+    return output_;
 
   // -------------------------------------------------------------------
   // CSI_PARAM — accumulating parameter bytes
@@ -544,13 +563,13 @@ auto vt_parser::parse(unsigned char const byte) -> std::vector<action> {
     } else if (byte >= 0x20 && byte <= 0x2F) {
       state_ = state::csi_intermediate;
     } else if (byte >= 0x40 && byte <= 0x7E) {
-      auto result = dispatch(static_cast<char>(byte));
+      dispatch(static_cast<char>(byte));
       reset_csi();
-      return result;
+      return output_;
     } else {
       reset_csi();
     }
-    return {};
+    return output_;
 
   // -------------------------------------------------------------------
   // CSI_INTERMEDIATE — saw intermediate byte(s)
@@ -559,13 +578,13 @@ auto vt_parser::parse(unsigned char const byte) -> std::vector<action> {
     if (byte >= 0x20 && byte <= 0x2F) {
       // stay in CSI_INTERMEDIATE (intermediate bytes are ignored)
     } else if (byte >= 0x40 && byte <= 0x7E) {
-      auto result = dispatch(static_cast<char>(byte));
+      dispatch(static_cast<char>(byte));
       reset_csi();
-      return result;
+      return output_;
     } else {
       reset_csi();
     }
-    return {};
+    return output_;
 
   // -------------------------------------------------------------------
   // OSC — inside ESC ] … collecting OSC string
@@ -573,18 +592,18 @@ auto vt_parser::parse(unsigned char const byte) -> std::vector<action> {
   case state::osc:
     switch (byte) {
     case 0x07: { // BEL — terminates OSC
-      auto result = dispatch_osc();
+      dispatch_osc();
       state_ = state::ground;
-      return result;
+      return output_;
     }
     case 0x1B:   // ESC — might be ST
       state_ = state::osc_esc;
-      return {};
+      return output_;
     default:
       if (osc_buffer_.size() < 1024) {
         osc_buffer_ += static_cast<char>(byte);
       }
-      return {};
+      return output_;
     }
 
   // -------------------------------------------------------------------
@@ -593,20 +612,20 @@ auto vt_parser::parse(unsigned char const byte) -> std::vector<action> {
   case state::osc_esc:
     switch (byte) {
     case '\\': {  // ST — terminates OSC
-      auto result = dispatch_osc();
+      dispatch_osc();
       state_ = state::ground;
-      return result;
+      return output_;
     }
     case 0x07: { // BEL — also terminates OSC (ESC BEL as string terminator)
-      auto result = dispatch_osc();
+      dispatch_osc();
       state_ = state::ground;
-      return result;
+      return output_;
     }
     case '[': {  // ESC [ — start new CSI, discard OSC
       state_ = state::csi_entry;
       param_buffer_.clear();
       osc_buffer_.clear();
-      return {};
+      return output_;
     }
     default:
       // Treat the prior ESC as start of a new escape sequence.
@@ -617,7 +636,7 @@ auto vt_parser::parse(unsigned char const byte) -> std::vector<action> {
     }
   }
 
-  return {};
+  return output_;
 }
 
 } // namespace betty::terminal
