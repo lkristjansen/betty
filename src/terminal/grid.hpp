@@ -5,22 +5,14 @@
 #include <string_view>
 #include <vector>
 
+#include "cursor_state.hpp"
 #include "platform/types.hpp"
+#include "scrollback_buffer.hpp"
+#include "sgr_state.hpp"
 #include "types.hpp"
 #include "vt_parser.hpp"
 
 namespace betty::terminal {
-
-// ===========================================================================
-// grid_cell — a single character cell in the terminal grid
-// ===========================================================================
-
-struct grid_cell {
-  char32_t codepoint = U' ';         // default: space
-  terminal_color fg = default_fg();  // foreground colour
-  terminal_color bg = default_bg();  // background colour
-  cell_attr attr = cell_attr::none;  // text attributes (bold, italic, etc.)
-};
 
 // ===========================================================================
 // terminal_grid — 2D cell grid with cursor tracking and auto-scroll
@@ -39,8 +31,8 @@ public:
 
   // --- Cursor ---------------------------------------------------------------
 
-  [[nodiscard]] auto cursor_col() const noexcept -> uint32_t { return cursor_col_; }
-  [[nodiscard]] auto cursor_row() const noexcept -> uint32_t { return cursor_row_; }
+  [[nodiscard]] auto cursor_col() const noexcept -> uint32_t { return cursor_.col(); }
+  [[nodiscard]] auto cursor_row() const noexcept -> uint32_t { return cursor_.row(); }
 
   // --- Write operations -----------------------------------------------------
 
@@ -56,7 +48,7 @@ public:
   // Apply a single parsed action to the grid.
   void apply(action const& a);
 
-  // --- Explicit cursor control ----------------------------------------------
+  // --- Explicit cursor control ---------------------------------------------
 
   // Move to start of next line; scroll if already on last row.
   void newline();
@@ -88,7 +80,7 @@ public:
   // Cursor column is reset to 0.
   void delete_lines(uint32_t n);
 
-  // --- Character operations (Task 14) --------------------------------------
+  // --- Character operations -------------------------------------------------
 
   // ICH — insert n blank cells at cursor, shifting the row right.
   // Cells shifted past the right edge are lost. Cursor is unchanged.
@@ -121,12 +113,11 @@ public:
   [[nodiscard]] auto scroll_viewport(int32_t delta) -> uint32_t;
 
   // Whether the viewport is following output (at the bottom).
-  [[nodiscard]] auto is_following_output() const noexcept -> bool { return viewport_scroll_ == 0; }
+  [[nodiscard]] auto is_following_output() const noexcept -> bool { return buffer_.is_following_output(); }
 
   // --- Access (for rendering) -----------------------------------------------
 
   [[nodiscard]] auto cell(uint32_t row, uint32_t col) const -> grid_cell const&;
-  [[nodiscard]] auto cells() const noexcept -> std::span<const grid_cell>;
 
   // Produce a flat row-major buffer of resolved render_cell structs.
   // Default fg/bg colours are resolved to actual RGB values internally.
@@ -145,72 +136,27 @@ public:
 private:
   uint32_t cols_;
   uint32_t rows_;
-  uint32_t cursor_col_ = 0;
-  uint32_t cursor_row_ = 0;
-  uint32_t saved_cursor_col_ = 0;
-  uint32_t saved_cursor_row_ = 0;
 
-  // ── Circular buffer ────────────────────────────────────────────────────
-  //
-  // The grid stores scrollback + visible rows in a single circular buffer.
-  // Physical capacity: total_capacity_rows_ = rows_ + k_scrollback_max.
-  // cells_ has size = cols_ * total_capacity_rows_.
-  //
-  // Logical layout (conceptual):
-  //   [oldest scrollback] ... [newest scrollback] [visible row 0] ... [visible row rows_-1]
-  //
-  // scrollback_head_  — physical index of the oldest scrollback row.
-  // scrollback_count_ — how many scrollback rows exist (0..k_scrollback_max).
-  // visible_idx(logical) = (scrollback_head_ + logical) % total_capacity_rows_.
-  //
-  // The visible portion is always the last rows_ logical rows
-  // (i.e. logical indices [scrollback_count_, scrollback_count_+rows_)).
-
-  uint32_t total_capacity_rows_ = 0;
-  uint32_t scrollback_head_ = 0;
-  uint32_t scrollback_count_ = 0;
-  uint32_t viewport_scroll_ = 0;  // 0 = following output; >0 = scrolled back
-  uint32_t scroll_top_ = 0;       // 0-based, inclusive
-  uint32_t scroll_bottom_ = 0;    // 0-based, inclusive
-  std::vector<grid_cell> cells_;
+  scrollback_buffer buffer_;
+  cursor_state cursor_;
+  sgr_state sgr_;
   vt_parser parser_;
-
-  // Convert a logical row index (0 = oldest scrollback) to a physical
-  // index into cells_.  Assumes logical < scrollback_count_ + rows_.
-  [[nodiscard]] auto physical_index(uint32_t logical_row) const -> uint32_t;
 
   // Cache of resolved render_cell values for the platform renderer.
   mutable std::vector<platform::render_cell> render_cache_;
 
-  // Current SGR state — applied to each cell on write_char.
-  terminal_color current_fg_ = default_fg();
-  terminal_color current_bg_ = default_bg();
-  cell_attr current_attr_ = cell_attr::none;
-
-  // --- Erase helpers (Task 8) ----------------------------------------------
-
-  // ED — Erase in Display (CSI Ps J).
-  void erase_display(uint32_t mode);
-
-  // EL — Erase in Line (CSI Ps K).
-  void erase_line(uint32_t mode);
-
-  // Erase a rectangular range of cells in the visible grid.
-  // All parameters are 0-based visible row/column indices.
-  void erase_visible_range(uint32_t vis_start_row, uint32_t vis_start_col,
-                           uint32_t vis_end_row, uint32_t vis_end_col);
-
   // Observer for out-of-band terminal events (OSC window title, etc.).
   std::function<void(std::string_view)> on_window_title_;
 
-  // --- Private Unicode helpers --------------------------------------------
+  // --- Private helpers -----------------------------------------------------
 
-  // Write a single cell at (cursor_row_, col) with the given properties.
   void write_cell(uint32_t col, char32_t cp, terminal_color fg, terminal_color bg, cell_attr attr);
-
-  // Handle a zero-width combining character (wcwidth == 0).
-  // Attempts NFC pre-composition with the previous cell; falls back to width 1.
   void write_combining_char(char32_t cp);
+
+  void erase_display(uint32_t mode);
+  void erase_line(uint32_t mode);
+  void erase_visible_range(uint32_t vis_start_row, uint32_t vis_start_col,
+                           uint32_t vis_end_row, uint32_t vis_end_col);
 };
 
 } // namespace betty::terminal

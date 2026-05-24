@@ -1,6 +1,8 @@
 add_library(terminal STATIC
+    cursor_state.cpp
     grid.cpp
     input_handler.cpp
+    scrollback_buffer.cpp
     vt_parser.cpp
     wcwidth.cpp
 )

@@ -1,4 +1,7 @@
 add_executable(betty_tests
+    cursor_state_test.cpp
+    sgr_state_test.cpp
+    scrollback_buffer_test.cpp
     vt_parser_test.cpp
     grid_test.cpp
     input_handler_test.cpp

@@ -98,4 +98,15 @@ constexpr auto xterm_256_color(uint8_t index) -> terminal_color {
   return {gray, gray, gray, 0};
 }
 
+// ===========================================================================
+// grid_cell — a single character cell in the terminal grid
+// ===========================================================================
+
+struct grid_cell {
+  char32_t codepoint = U' ';         // default: space
+  terminal_color fg = default_fg();  // foreground colour
+  terminal_color bg = default_bg();  // background colour
+  cell_attr attr = cell_attr::none;  // text attributes (bold, italic, etc.)
+};
+
 } // namespace betty::terminal
