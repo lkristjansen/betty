@@ -64,7 +64,7 @@ class vt_parser {
 public:
   // Feed one byte.  Returns zero or more actions for each complete sequence.
   // The returned span refers to internal storage that is invalidated on the next call.
-  auto parse(unsigned char byte) -> std::span<const action>;
+  [[nodiscard]] auto parse(unsigned char byte) -> std::span<const action>;
 
 private:
   enum class state : uint8_t {
@@ -81,8 +81,8 @@ private:
   void reset_csi();
   void dispatch(char final_byte);
   void dispatch_osc();
-  auto parse_params() -> std::pair<uint32_t, uint32_t>;
-  auto split_params() -> std::span<const uint32_t>;
+  [[nodiscard]] auto parse_params() -> std::pair<uint32_t, uint32_t>;
+  [[nodiscard]] auto split_params() -> std::span<const uint32_t>;
 
   state state_ = state::ground;
   std::string param_buffer_;  // collects CSI parameter bytes (digits, ';')

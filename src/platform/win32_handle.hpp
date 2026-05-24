@@ -1,6 +1,9 @@
 #pragma once
 #include <windows.h>
 
+#include <bit>
+#include <cstdint>
+#include <type_traits>
 #include <utility>
 
 namespace betty::platform {
@@ -8,20 +11,36 @@ namespace betty::platform {
 // ===========================================================================
 // win32_handle — move-only RAII wrapper for Windows handle types
 // ===========================================================================
-// H: handle type (HANDLE, HPCON, etc.)
-// InvalidSentinel: value representing an invalid/empty handle
-// Deleter: function called when the handle is released
+//
+// Parameterized by a Traits type that supplies:
+//   typename Traits::handle_type      — the raw handle type (HANDLE, HPCON, …)
+//   static constexpr uintptr_t invalid — sentinel for "no handle"
+//   static void close(handle_type)    — deleter
+//
+// Compile-time guards:
+//   - handle_type must be pointer-sized (sizeof == sizeof(uintptr_t))
+//   - handle_type must be trivially copyable (required by bit_cast)
 // ===========================================================================
 
-template <typename H, std::uintptr_t InvalidSentinelVal = 0, auto Deleter = ::CloseHandle>
+template <typename Traits>
 class win32_handle {
+public:
+  using handle_type = typename Traits::handle_type;
+
 private:
-  static H sentinel() noexcept { return reinterpret_cast<H>(InvalidSentinelVal); }
+  static_assert(sizeof(handle_type) == sizeof(std::uintptr_t),
+                "handle_type must be a pointer-sized type");
+  static_assert(std::is_trivially_copyable_v<handle_type>,
+                "handle_type must be trivially copyable");
+
+  static handle_type sentinel() noexcept {
+    return std::bit_cast<handle_type>(Traits::invalid);
+  }
 
 public:
   win32_handle() noexcept = default;
 
-  explicit win32_handle(H h) noexcept : h_(h) {}
+  explicit win32_handle(handle_type h) noexcept : h_(h) {}
 
   ~win32_handle() { reset(); }
 
@@ -37,40 +56,58 @@ public:
 
   // --- Access ---------------------------------------------------------------
 
-  [[nodiscard]] H get() const noexcept { return h_; }
+  [[nodiscard]] handle_type get() const noexcept { return h_; }
 
-  [[nodiscard]] H release() noexcept {
-    H h = h_;
-    h_  = sentinel();
+  [[nodiscard]] handle_type release() noexcept {
+    handle_type h = h_;
+    h_ = sentinel();
     return h;
   }
 
-  void reset(H h = sentinel()) noexcept {
-    if (h_ != sentinel()) Deleter(h_);
+  void reset(handle_type h = sentinel()) noexcept {
+    if (std::bit_cast<std::uintptr_t>(h_) != Traits::invalid) {
+      Traits::close(h_);
+    }
     h_ = h;
   }
 
   [[nodiscard]] explicit operator bool() const noexcept {
-    return h_ != sentinel();
+    return std::bit_cast<std::uintptr_t>(h_) != Traits::invalid;
   }
 
 private:
-  H h_ = sentinel();
+  handle_type h_ = sentinel();
 };
 
 // ===========================================================================
-// Convenience aliases for common handle types
+// Built-in traits for common handle types
 // ===========================================================================
 
-// Regular HANDLE — sentinel is nullptr (integer value 0).
-using scoped_handle = win32_handle<HANDLE>;
+struct handle_traits {
+  using handle_type = HANDLE;
+  static constexpr std::uintptr_t invalid = 0;
+  static void close(handle_type h) noexcept { ::CloseHandle(h); }
+};
 
-// Pipe HANDLE — sentinel is INVALID_HANDLE_VALUE.
-// CreatePipe returns this value on failure.  Its pointer representation
-// is (HANDLE)-1, i.e. std::uintptr_t(-1).
-using scoped_pipe = win32_handle<HANDLE, static_cast<std::uintptr_t>(-1)>;
+struct pipe_handle_traits {
+  using handle_type = HANDLE;
+  // CreatePipe returns INVALID_HANDLE_VALUE on failure.
+  static constexpr std::uintptr_t invalid = static_cast<std::uintptr_t>(-1);
+  static void close(handle_type h) noexcept { ::CloseHandle(h); }
+};
 
-// Pseudoconsole handle — closed via ClosePseudoConsole, not CloseHandle.
-using scoped_conpty = win32_handle<HPCON, 0, ::ClosePseudoConsole>;
+struct conpty_traits {
+  using handle_type = HPCON;
+  static constexpr std::uintptr_t invalid = 0;
+  static void close(handle_type h) noexcept { ::ClosePseudoConsole(h); }
+};
+
+// ===========================================================================
+// Convenience aliases
+// ===========================================================================
+
+using scoped_handle = win32_handle<handle_traits>;
+using scoped_pipe   = win32_handle<pipe_handle_traits>;
+using scoped_conpty = win32_handle<conpty_traits>;
 
 } // namespace betty::platform

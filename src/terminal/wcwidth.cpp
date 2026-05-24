@@ -1,4 +1,5 @@
 #include "wcwidth.hpp"
+#include <algorithm>
 #include <array>
 #include <cstddef>
 
@@ -101,15 +102,13 @@ constexpr std::array<range, 10> zero_width_ranges = {{
   { 0x2060, 0x206F },
 }};
 
-// Check if codepoint is in a sorted array of ranges.
+// Check if codepoint is in a sorted array of ranges via binary search.
 template <size_t N>
 auto in_ranges(char32_t cp, std::array<range, N> const& ranges) -> bool {
-  // Linear scan is fast enough for our small table sizes.
-  for (auto const& r : ranges) {
-    if (cp < r.lo) return false;  // ranges are sorted, no need to continue
-    if (cp <= r.hi) return true;
-  }
-  return false;
+  auto const it = std::lower_bound(
+      ranges.begin(), ranges.end(), cp,
+      [](range const& r, char32_t c) { return r.hi < c; });
+  return it != ranges.end() && cp >= it->lo;
 }
 
 } // anonymous namespace

@@ -85,7 +85,7 @@ auto set_char_callback(win32_window& window, std::function<void(uint32_t codepoi
 
 // Returns false when WM_QUIT is received (application should exit).
 // Wraps PeekMessageW / TranslateMessage / DispatchMessageW internally.
-auto dispatch_pending_messages() -> bool;
+[[nodiscard]] auto dispatch_pending_messages() -> bool;
 
 // Show a modal error message box.  Used for fatal startup errors so the
 // user sees a diagnostic even though the app runs with the WINDOWS subsystem.

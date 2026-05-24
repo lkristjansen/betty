@@ -986,7 +986,7 @@ TEST_CASE("UTF-8 — stray continuation byte is ignored", "[task15][utf8]") {
 TEST_CASE("UTF-8 — truncated sequence aborted by ESC", "[task15][utf8]") {
     // 0xE4 starts 3-byte seq; 0x1B (ESC) aborts it.
     vt_parser p;
-    p.parse(0xE4);
+    (void)p.parse(0xE4);
     auto const v = p.parse(0x1B);
     // ESC puts parser in escape state; no write_char for broken UTF-8.
     for (auto const& a : v) {

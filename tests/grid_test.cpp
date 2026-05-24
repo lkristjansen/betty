@@ -505,7 +505,7 @@ TEST_CASE("Grid — resize smaller truncates content", "[grid][resize]") {
     // Since there are now 10 reflowed rows and only 3 visible, the bottom
     // 3 are visible. Scroll to top to check original content.
     CHECK(g.is_following_output() == true);
-    g.scroll_viewport(7);  // scroll back to the top
+    (void)g.scroll_viewport(7);  // scroll back to the top
     CHECK(g.cell(0, 0).codepoint == U'a');
     CHECK(g.cell(0, 1).codepoint == U'b');
     CHECK(g.cell(0, 2).codepoint == U'c');
@@ -626,7 +626,7 @@ TEST_CASE("Grid — resize truncates rows beyond copy_rows", "[grid][resize]") {
     CHECK(g.cols() == 3);
     // With scrollback, the bottom 2 rows are visible (rows 3 "ddd" and 4 spaces).
     // Scroll back to the top to verify original content is preserved.
-    g.scroll_viewport(3);  // scroll to show rows 0-1 (aaa, bbb)
+    (void)g.scroll_viewport(3);  // scroll to show rows 0-1 (aaa, bbb)
     CHECK(g.cell(0, 0).codepoint == U'a');
     CHECK(g.cell(0, 1).codepoint == U'a');
     CHECK(g.cell(1, 0).codepoint == U'b');
@@ -1008,7 +1008,7 @@ TEST_CASE("Grid — default scroll region is full screen", "[grid][scroll_region
     g.newline();
     CHECK(g.cursor_row() == 4);  // stays at bottom margin
     // Row 0 content pushed to scrollback. Check via scrolling back.
-    g.scroll_viewport(1);
+    (void)g.scroll_viewport(1);
     CHECK(g.cell(0, 0).codepoint == U'r');
 }
 
@@ -1038,21 +1038,23 @@ TEST_CASE("Grid — set_scroll_region top > bottom is ignored", "[grid][scroll_r
     CHECK(g.cell(9, 0).codepoint == U' ');
 }
 
-TEST_CASE("Grid — set_scroll_region top >= rows clamped", "[grid][scroll_region]") {
+TEST_CASE("Grid — set_scroll_region with top > rows is ignored", "[grid][scroll_region]") {
     terminal_grid g(10, 5);
-    g.set_scroll_region(99, 100);  // both beyond rows — clamped to 5
-    // Top clamped to rows_, bottom defaults to rows_ → top == bottom? No:
-    // top = 99 → clamped to 5, bottom = 100 → clamped to 5
-    // top > bottom? 5 > 5? No, 5 == 5, not >. VT100 spec says ignore if top >= bottom.
-    // Wait — our implementation checks top > bottom, not top >= bottom. Let's fix:
-    // Actually, VT100 says top >= bottom → ignore. Let's just test the clamp.
-    // With top=99, bottom=100: top clamped to 5, bottom clamped to 5 → top == bottom.
-    // VT100: if top >= bottom, ignore. But we only check >. Hmm.
-    // For now, set a valid region.
-    g.set_scroll_region(2, 3);
-    // Cursor home.
-    CHECK(g.cursor_row() == 0);
-    CHECK(g.cursor_col() == 0);
+
+    // Move cursor away from home so we can verify the call is a no-op.
+    action mv;
+    mv.type = action_type::move_cursor;
+    mv.row = 3; mv.col = 7;
+    g.apply(mv);
+    CHECK(g.cursor_row() == 3);
+    CHECK(g.cursor_col() == 7);
+
+    // top=99 clamps to 5, bottom=100 clamps to 5 → top >= bottom → ignored per VT100.
+    g.set_scroll_region(99, 100);
+
+    // Cursor was NOT moved to home (the call was ignored).
+    CHECK(g.cursor_row() == 3);
+    CHECK(g.cursor_col() == 7);
 }
 
 TEST_CASE("Grid — set_scroll_region bottom > rows clamped", "[grid][scroll_region]") {
@@ -1068,7 +1070,7 @@ TEST_CASE("Grid — set_scroll_region bottom > rows clamped", "[grid][scroll_reg
     g.newline();  // should scroll full screen (region = 1-5)
     CHECK(g.cursor_row() == 4);
     // Row 0 went to scrollback — check via scrolling back.
-    g.scroll_viewport(1);
+    (void)g.scroll_viewport(1);
     CHECK(g.cell(0, 0).codepoint == U'H');
 }
 
@@ -1367,7 +1369,7 @@ TEST_CASE("Grid — SU full screen pushes to scrollback", "[grid][su]") {
     // user manually scrolls; scrollback_count increased but viewport unchanged.
     CHECK(g.is_following_output() == true);
     // Verify scrollback has Row A by scrolling back.
-    g.scroll_viewport(1);
+    (void)g.scroll_viewport(1);
     CHECK(g.cell(0, 0).codepoint == U'A');
 }
 

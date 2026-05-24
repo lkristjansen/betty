@@ -619,22 +619,6 @@ void terminal_grid::scroll_page_down(uint32_t n) {
 void terminal_grid::erase_display(uint32_t mode) {
   if (cols_ == 0 || rows_ == 0) return;
 
-  // Helper: erase a range of cells in the visible grid.
-  // vis_start_row, vis_end_row are 0-based visible row indices.
-  auto erase_visible_range = [this](uint32_t vis_start_row, uint32_t vis_start_col,
-                                      uint32_t vis_end_row, uint32_t vis_end_col) {
-    for (uint32_t r = vis_start_row; r <= vis_end_row; ++r) {
-      uint32_t const logical = scrollback_count_ + r;
-      uint32_t const phys = physical_index(logical);
-      size_t const base = static_cast<size_t>(phys) * cols_;
-      uint32_t const start_c = (r == vis_start_row) ? vis_start_col : 0;
-      uint32_t const end_c   = (r == vis_end_row)   ? vis_end_col   : cols_ - 1;
-      for (uint32_t c = start_c; c <= end_c; ++c) {
-        cells_[base + c] = grid_cell{};
-      }
-    }
-  };
-
   uint32_t const last_vis_row = rows_ - 1;
   uint32_t const last_vis_col = cols_ - 1;
 
@@ -688,6 +672,24 @@ void terminal_grid::erase_line(uint32_t mode) {
     for (uint32_t c = cursor_col_; c < cols_; ++c)
       cells_[base + c] = grid_cell{};
     break;
+  }
+}
+
+// ===========================================================================
+// erase_visible_range — clear a rectangular region of the visible grid
+// ===========================================================================
+
+void terminal_grid::erase_visible_range(uint32_t vis_start_row, uint32_t vis_start_col,
+                                         uint32_t vis_end_row, uint32_t vis_end_col) {
+  for (uint32_t r = vis_start_row; r <= vis_end_row; ++r) {
+    uint32_t const logical = scrollback_count_ + r;
+    uint32_t const phys = physical_index(logical);
+    size_t const base = static_cast<size_t>(phys) * cols_;
+    uint32_t const start_c = (r == vis_start_row) ? vis_start_col : 0;
+    uint32_t const end_c   = (r == vis_end_row)   ? vis_end_col   : cols_ - 1;
+    for (uint32_t c = start_c; c <= end_c; ++c) {
+      cells_[base + c] = grid_cell{};
+    }
   }
 }
 

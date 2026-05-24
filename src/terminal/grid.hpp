@@ -118,7 +118,7 @@ public:
   // Scroll the viewport up/down by `delta` rows.
   // Positive delta = scroll back (up), negative = scroll forward (down).
   // Returns the new viewport scroll offset.
-  auto scroll_viewport(int32_t delta) -> uint32_t;
+  [[nodiscard]] auto scroll_viewport(int32_t delta) -> uint32_t;
 
   // Whether the viewport is following output (at the bottom).
   [[nodiscard]] auto is_following_output() const noexcept -> bool { return viewport_scroll_ == 0; }
@@ -194,6 +194,11 @@ private:
 
   // EL — Erase in Line (CSI Ps K).
   void erase_line(uint32_t mode);
+
+  // Erase a rectangular range of cells in the visible grid.
+  // All parameters are 0-based visible row/column indices.
+  void erase_visible_range(uint32_t vis_start_row, uint32_t vis_start_col,
+                           uint32_t vis_end_row, uint32_t vis_end_col);
 
   // Observer for out-of-band terminal events (OSC window title, etc.).
   std::function<void(std::string_view)> on_window_title_;

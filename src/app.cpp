@@ -40,19 +40,19 @@ int Application::run() {
       // ── Scrollback navigation ──────────────────────────────────────
       if (ctrl && shift && !alt) {
         if (vk == platform::vk_code::arrow_up) {
-          grid_.scroll_viewport(1);
+          (void)grid_.scroll_viewport(1);
           return;
         }
         if (vk == platform::vk_code::arrow_down) {
-          grid_.scroll_viewport(-1);
+          (void)grid_.scroll_viewport(-1);
           return;
         }
         if (vk == platform::vk_code::page_up) {
-          grid_.scroll_viewport(static_cast<int32_t>(grid_.rows() > 0 ? grid_.rows() - 1 : 0));
+          (void)grid_.scroll_viewport(static_cast<int32_t>(grid_.rows() > 0 ? grid_.rows() - 1 : 0));
           return;
         }
         if (vk == platform::vk_code::page_down) {
-          grid_.scroll_viewport(-static_cast<int32_t>(grid_.rows() > 0 ? grid_.rows() - 1 : 0));
+          (void)grid_.scroll_viewport(-static_cast<int32_t>(grid_.rows() > 0 ? grid_.rows() - 1 : 0));
           return;
         }
       }
@@ -89,10 +89,12 @@ int Application::run() {
         return;  // rtv_ is now empty; the RTV guard below will exit cleanly.
       }
 
-      if (auto result = renderer_.update_dimensions(device_, new_dims);
-          !result) {
-        util::log_error(result.error(), "update renderer dimensions");
-      }
+      (void)renderer_.update_dimensions(device_, new_dims)
+          .or_else([](std::error_code const& ec)
+                       -> std::expected<void, std::error_code> {
+            util::log_error(ec, "update renderer dimensions");
+            return {};
+          });
 
       // Only on completed resize: recompute terminal dimensions, resize
       // the grid buffer, and notify the ConPTY shell.
@@ -107,11 +109,12 @@ int Application::run() {
           grid_.resize(new_cols, new_rows);
 
           if (shell_ && platform::is_shell_running(*shell_)) {
-            if (auto result =
-                    platform::resize_shell(*shell_, new_cols, new_rows);
-                !result) {
-              util::log_error(result.error(), "resize shell");
-            }
+            (void)platform::resize_shell(*shell_, new_cols, new_rows)
+                .or_else([](std::error_code const& ec)
+                             -> std::expected<void, std::error_code> {
+                  util::log_error(ec, "resize shell");
+                  return {};
+                });
           }
         }
       }
