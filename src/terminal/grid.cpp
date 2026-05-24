@@ -287,14 +287,12 @@ void terminal_grid::scroll_up() {
   if (region_height == 0) return;
 
   for (uint32_t r = cursor_.scroll_top(); r < cursor_.scroll_bottom(); ++r) {
-    auto src = buffer_.active_row(r + 1);
-    auto dst = buffer_.active_row(r);
-    std::copy_n(src.data(), cols_, dst.data());
+    std::ranges::copy(buffer_.active_row(r + 1), buffer_.active_row(r).begin());
   }
 
   // Clear the bottom row of the region.
   auto bottom_row = buffer_.active_row(cursor_.scroll_bottom());
-  std::fill_n(bottom_row.data(), cols_, grid_cell{});
+  std::ranges::fill(bottom_row, grid_cell{});
 }
 
 // ===========================================================================
@@ -349,15 +347,12 @@ void terminal_grid::insert_lines(uint32_t n) {
   // Shift rows [cursor_row_ .. scroll_bottom_ - n] down by n.
   // Work from bottom up to avoid overwriting.
   for (uint32_t dst = cursor_.scroll_bottom(); dst >= cursor_.row() + n; --dst) {
-    auto src = buffer_.active_row(dst - n);
-    auto dst_row = buffer_.active_row(dst);
-    std::copy_n(src.data(), cols_, dst_row.data());
+    std::ranges::copy(buffer_.active_row(dst - n), buffer_.active_row(dst).begin());
   }
 
   // Fill the newly vacated rows with blank cells.
   for (uint32_t r = cursor_.row(); r < cursor_.row() + n && r <= cursor_.scroll_bottom(); ++r) {
-    auto row = buffer_.active_row(r);
-    std::fill_n(row.data(), cols_, grid_cell{});
+    std::ranges::fill(buffer_.active_row(r), grid_cell{});
   }
 
   // Reset cursor column (VT100 spec).
@@ -382,15 +377,12 @@ void terminal_grid::delete_lines(uint32_t n) {
   // Shift rows [cursor_row_ + n .. scroll_bottom_] up by n.
   // Work from top down.
   for (uint32_t dst = cursor_.row(); dst + n <= cursor_.scroll_bottom(); ++dst) {
-    auto src = buffer_.active_row(dst + n);
-    auto dst_row = buffer_.active_row(dst);
-    std::copy_n(src.data(), cols_, dst_row.data());
+    std::ranges::copy(buffer_.active_row(dst + n), buffer_.active_row(dst).begin());
   }
 
   // Fill the newly vacated rows at the bottom of the region with blanks.
   for (uint32_t r = cursor_.scroll_bottom() - n + 1; r <= cursor_.scroll_bottom(); ++r) {
-    auto row = buffer_.active_row(r);
-    std::fill_n(row.data(), cols_, grid_cell{});
+    std::ranges::fill(buffer_.active_row(r), grid_cell{});
   }
 
   // Reset cursor column (VT100 spec).
@@ -412,15 +404,11 @@ void terminal_grid::insert_chars(uint32_t n) {
 
   auto row = buffer_.active_row(cursor_.row());
 
-  // Shift cells right-to-left to avoid overwriting.
-  for (uint32_t c = cols_ - 1; c >= cursor_.col() + n; --c) {
-    row[c] = row[c - n];
-  }
+  // Shift cells right, making room for n blanks.
+  std::ranges::shift_right(row.subspan(cursor_.col(), cols_ - cursor_.col()), n);
 
   // Fill the n vacated positions with blank cells.
-  for (uint32_t c = cursor_.col(); c < cursor_.col() + n && c < cols_; ++c) {
-    row[c] = grid_cell{};
-  }
+  std::ranges::fill(row.subspan(cursor_.col(), n), grid_cell{});
   // Cursor is unchanged.
 }
 
@@ -439,15 +427,11 @@ void terminal_grid::delete_chars(uint32_t n) {
 
   auto row = buffer_.active_row(cursor_.row());
 
-  // Shift cells left-to-right.
-  for (uint32_t c = cursor_.col(); c + n < cols_; ++c) {
-    row[c] = row[c + n];
-  }
+  // Shift cells left, removing n cells.
+  std::ranges::shift_left(row.subspan(cursor_.col(), cols_ - cursor_.col()), n);
 
   // Fill the n vacated positions at the right edge with blank cells.
-  for (uint32_t c = cols_ - n; c < cols_; ++c) {
-    row[c] = grid_cell{};
-  }
+  std::ranges::fill(row.subspan(cols_ - n, n), grid_cell{});
   // Cursor is unchanged.
 }
 
@@ -467,9 +451,7 @@ void terminal_grid::erase_chars(uint32_t n) {
   auto row = buffer_.active_row(cursor_.row());
 
   // Overwrite n cells with blank cells.
-  for (uint32_t c = cursor_.col(); c < cursor_.col() + n && c < cols_; ++c) {
-    row[c] = grid_cell{};
-  }
+  std::ranges::fill(row.subspan(cursor_.col(), n), grid_cell{});
   // Cursor is unchanged.
 }
 
@@ -494,15 +476,12 @@ void terminal_grid::scroll_page_up(uint32_t n) {
 
   // Sub-region: manual shift, no scrollback interaction.
   for (uint32_t r = cursor_.scroll_top(); r + n <= cursor_.scroll_bottom(); ++r) {
-    auto src = buffer_.active_row(r + n);
-    auto dst = buffer_.active_row(r);
-    std::copy_n(src.data(), cols_, dst.data());
+    std::ranges::copy(buffer_.active_row(r + n), buffer_.active_row(r).begin());
   }
 
   // Clear the bottom n rows of the region.
   for (uint32_t r = cursor_.scroll_bottom() - n + 1; r <= cursor_.scroll_bottom(); ++r) {
-    auto row = buffer_.active_row(r);
-    std::fill_n(row.data(), cols_, grid_cell{});
+    std::ranges::fill(buffer_.active_row(r), grid_cell{});
   }
 }
 
@@ -520,16 +499,13 @@ void terminal_grid::scroll_page_down(uint32_t n) {
   // Shift rows [scroll_top_ .. scroll_bottom_ - n] down by n.
   // Work from bottom up to avoid overwriting.
   for (uint32_t dst = cursor_.scroll_bottom(); dst >= cursor_.scroll_top() + n; --dst) {
-    auto src = buffer_.active_row(dst - n);
-    auto dst_row = buffer_.active_row(dst);
-    std::copy_n(src.data(), cols_, dst_row.data());
+    std::ranges::copy(buffer_.active_row(dst - n), buffer_.active_row(dst).begin());
   }
 
   // Fill the top n rows of the region with blanks.
   // No scrollback interaction.
   for (uint32_t r = cursor_.scroll_top(); r < cursor_.scroll_top() + n && r <= cursor_.scroll_bottom(); ++r) {
-    auto row = buffer_.active_row(r);
-    std::fill_n(row.data(), cols_, grid_cell{});
+    std::ranges::fill(buffer_.active_row(r), grid_cell{});
   }
 }
 
@@ -573,20 +549,16 @@ void terminal_grid::erase_line(uint32_t mode) {
 
   switch (mode) {
   case 0: // Erase from cursor to end of line.
-    for (uint32_t c = cursor_.col(); c < cols_; ++c)
-      row[c] = grid_cell{};
+    std::ranges::fill(row.subspan(cursor_.col(), cols_ - cursor_.col()), grid_cell{});
     break;
   case 1: // Erase from beginning of line to cursor.
-    for (uint32_t c = 0; c <= cursor_.col() && c < cols_; ++c)
-      row[c] = grid_cell{};
+    std::ranges::fill(row.subspan(0, cursor_.col() + 1), grid_cell{});
     break;
   case 2: // Erase entire line.
-    for (uint32_t c = 0; c < cols_; ++c)
-      row[c] = grid_cell{};
+    std::ranges::fill(row, grid_cell{});
     break;
   default:
-    for (uint32_t c = cursor_.col(); c < cols_; ++c)
-      row[c] = grid_cell{};
+    std::ranges::fill(row.subspan(cursor_.col(), cols_ - cursor_.col()), grid_cell{});
     break;
   }
 }
@@ -601,9 +573,7 @@ void terminal_grid::erase_visible_range(uint32_t vis_start_row, uint32_t vis_sta
     auto row = buffer_.active_row(r);
     uint32_t const start_c = (r == vis_start_row) ? vis_start_col : 0;
     uint32_t const end_c   = (r == vis_end_row)   ? vis_end_col   : cols_ - 1;
-    for (uint32_t c = start_c; c <= end_c; ++c) {
-      row[c] = grid_cell{};
-    }
+    std::ranges::fill(row.subspan(start_c, end_c - start_c + 1), grid_cell{});
   }
 }
 
@@ -628,25 +598,17 @@ auto terminal_grid::render_cells() -> std::span<const platform::render_cell> {
     auto const& src_row = buffer_.rendered_row(r);
     size_t const dst_offset = static_cast<size_t>(r) * cols_;
 
-    for (uint32_t c = 0; c < cols_; ++c) {
-      auto const& src = src_row[c];
-      auto& dst = render_cache_[dst_offset + c];
-
-      dst.codepoint = src.codepoint;
-      dst.attr = to_uint8(src.attr);
-
-      if (src.fg.is_default()) {
-        dst.fg = platform::k_default_fg_color;
-      } else {
-        dst.fg = {src.fg.r, src.fg.g, src.fg.b};
-      }
-
-      if (src.bg.is_default()) {
-        dst.bg = platform::k_default_bg_color;
-      } else {
-        dst.bg = {src.bg.r, src.bg.g, src.bg.b};
-      }
-    }
+    std::ranges::transform(src_row, render_cache_.begin() + dst_offset,
+      [](grid_cell const& src) {
+        platform::render_cell dst;
+        dst.codepoint = src.codepoint;
+        dst.attr = to_uint8(src.attr);
+        dst.fg = src.fg.is_default() ? platform::k_default_fg_color
+                                     : platform::rgb_color{src.fg.r, src.fg.g, src.fg.b};
+        dst.bg = src.bg.is_default() ? platform::k_default_bg_color
+                                     : platform::rgb_color{src.bg.r, src.bg.g, src.bg.b};
+        return dst;
+      });
   }
 
   return render_cache_;
