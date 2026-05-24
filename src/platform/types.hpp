@@ -68,6 +68,10 @@ struct rgb_color {
   std::uint8_t b = 0;
 };
 
+// Resolved default terminal colours (Catppuccin Mocha).
+inline constexpr rgb_color k_default_fg_color = {0xCD, 0xD6, 0xF4};  // text
+inline constexpr rgb_color k_default_bg_color = {0x1E, 0x1E, 0x2E};  // base
+
 // ===========================================================================
 // Generic 2D size (cols/rows, width/height).
 // ===========================================================================

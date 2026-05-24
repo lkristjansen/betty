@@ -6,6 +6,7 @@
 #include <vector>
 
 #include "platform/types.hpp"
+#include "types.hpp"
 #include "vt_parser.hpp"
 
 namespace betty::terminal {
@@ -16,8 +17,8 @@ namespace betty::terminal {
 
 struct grid_cell {
   char32_t codepoint = U' ';         // default: space
-  rgb_color fg = default_fg();       // foreground colour
-  rgb_color bg = default_bg();       // background colour
+  terminal_color fg = default_fg();  // foreground colour
+  terminal_color bg = default_bg();  // background colour
   cell_attr attr = cell_attr::none;  // text attributes (bold, italic, etc.)
 };
 
@@ -182,8 +183,8 @@ private:
   mutable std::vector<platform::render_cell> render_cache_;
 
   // Current SGR state — applied to each cell on write_char.
-  rgb_color current_fg_ = default_fg();
-  rgb_color current_bg_ = default_bg();
+  terminal_color current_fg_ = default_fg();
+  terminal_color current_bg_ = default_bg();
   cell_attr current_attr_ = cell_attr::none;
 
   // --- Erase helpers (Task 8) ----------------------------------------------
@@ -200,7 +201,7 @@ private:
   // --- Private Unicode helpers --------------------------------------------
 
   // Write a single cell at (cursor_row_, col) with the given properties.
-  void write_cell(uint32_t col, char32_t cp, rgb_color fg, rgb_color bg, cell_attr attr);
+  void write_cell(uint32_t col, char32_t cp, terminal_color fg, terminal_color bg, cell_attr attr);
 
   // Handle a zero-width combining character (wcwidth == 0).
   // Attempts NFC pre-composition with the previous cell; falls back to width 1.

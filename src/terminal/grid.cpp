@@ -89,7 +89,7 @@ void terminal_grid::write_char(char32_t cp) {
 // ===========================================================================
 
 void terminal_grid::write_cell(uint32_t col, char32_t cp,
-                                rgb_color fg, rgb_color bg, cell_attr attr) {
+                                terminal_color fg, terminal_color bg, cell_attr attr) {
   uint32_t const logical = scrollback_count_ + cursor_row_;
   uint32_t const phys = physical_index(logical);
   auto& cell = cells_[static_cast<size_t>(phys) * cols_ + col];
@@ -735,14 +735,14 @@ auto terminal_grid::render_cells() -> std::span<const platform::render_cell> {
       dst.codepoint = src.codepoint;
       dst.attr = static_cast<uint8_t>(src.attr);
 
-      if (src.fg.flags & 1) {
-        dst.fg = {k_default_fg_color.r, k_default_fg_color.g, k_default_fg_color.b};
+      if (src.fg.is_default()) {
+        dst.fg = platform::k_default_fg_color;
       } else {
         dst.fg = {src.fg.r, src.fg.g, src.fg.b};
       }
 
-      if (src.bg.flags & 1) {
-        dst.bg = {k_default_bg_color.r, k_default_bg_color.g, k_default_bg_color.b};
+      if (src.bg.is_default()) {
+        dst.bg = platform::k_default_bg_color;
       } else {
         dst.bg = {src.bg.r, src.bg.g, src.bg.b};
       }
