@@ -200,23 +200,25 @@ TEST_CASE("Input — shift is ignored, key still produces output", "[input][modi
     CHECK(h.on_keydown(vk_code::enter, false, true, false) == "\r");
 }
 
-TEST_CASE("Input — alt is ignored, key still produces output", "[input][modifier]") {
+TEST_CASE("Input — Alt prefixes keys with ESC", "[input][alt]") {
     input_handler h;
-    // Alt alone (no Ctrl) — the Alt that prefixes with ESC isn't implemented
-    CHECK(h.on_keydown(vk_code::arrow_up, false, false, true) == "\x1B[A");
+    // Alt+Up → ESC + CSI A
+    CHECK(h.on_keydown(vk_code::arrow_up, false, false, true) == "\x1B\x1B[A");
+    // Alt+Enter → ESC + CR
+    CHECK(h.on_keydown(vk_code::enter, false, false, true) == "\x1B\r");
+    // Alt+a → ESC + a
+    CHECK(h.on_keydown(vk_code::printable_a, false, false, true) == "\x1B" "a");
 }
 
 // ===========================================================================
 // Edge: Ctrl+Alt combination
 // ===========================================================================
 
-TEST_CASE("Input — Ctrl+Alt letter is not treated as Ctrl, passes through", "[input][edge]") {
+TEST_CASE("Input — Ctrl+Alt letter sends ESC + ctrl-char", "[input][edge]") {
     input_handler h;
-    // Ctrl+Alt+a: control=true, alt=true — the `if (control && !alt)` guard
-    // means the Ctrl block is skipped entirely.  Falls to core-keys switch
-    // (no match), then printable-ASCII pass-through: 'a' (0x61) → "a".
+    // Ctrl+Alt+A: control char 0x01, prefixed with ESC
     auto result = h.on_keydown(vk_code::printable_a, true, false, true);
-    CHECK(result == "a");
+    CHECK(result == "\x1B\x01");
 }
 
 // ===========================================================================

@@ -168,6 +168,18 @@ enum class vk_code : uint32_t {
   f10            = 0x109,
   f11            = 0x10A,
   f12            = 0x10B,
+  // Punctuation keys (US keyboard layout; unshifted character shown)
+  semicolon      = 0x10C,  // ;
+  comma          = 0x10D,  // ,
+  period_        = 0x10E,  // .
+  slash          = 0x10F,  // /
+  backslash      = 0x110,
+  bracket_left   = 0x111,  // [
+  bracket_right  = 0x112,  // ]
+  apostrophe     = 0x113,  // '
+  minus          = 0x114,  // -
+  equal_         = 0x115,  // =
+  grave          = 0x116,  // `
   // Printable ASCII range (codepoint == ASCII value)
   printable_a    = 'a',
   printable_z    = 'z',
