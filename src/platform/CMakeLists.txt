@@ -2,6 +2,7 @@ add_library(platform STATIC
     error.cpp
     window.cpp
     gfx.cpp
+    renderer_context.cpp
     text.cpp
     shell.cpp
     unicode.cpp

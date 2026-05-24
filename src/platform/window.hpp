@@ -74,6 +74,7 @@ private:
   friend auto set_window_title(win32_window&, std::string_view) -> void;
   friend auto set_resize_callback(win32_window&, std::function<void(uint32_t, uint32_t, bool)>) -> void;
   friend auto set_min_window_size(win32_window&, uint32_t, uint32_t) -> void;
+  friend auto get_client_size(win32_window const&) -> window_dimensions;
 };
 
 [[nodiscard]] auto make_window(window_settings const& settings)
@@ -103,5 +104,8 @@ auto set_resize_callback(win32_window& window,
 // Set the minimum client area size enforced via WM_GETMINMAXINFO.
 auto set_min_window_size(win32_window& window,
     uint32_t client_width, uint32_t client_height) -> void;
+
+// Query the current client-area dimensions of the window.
+[[nodiscard]] auto get_client_size(win32_window const& window) -> window_dimensions;
 
 } // namespace betty::platform

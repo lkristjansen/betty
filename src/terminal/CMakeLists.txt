@@ -3,6 +3,7 @@ add_library(terminal STATIC
     grid.cpp
     input_handler.cpp
     scrollback_buffer.cpp
+    session.cpp
     vt_parser.cpp
     wcwidth.cpp
 )

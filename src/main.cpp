@@ -1,4 +1,4 @@
-#include "app.hpp"
+#include "application.hpp"
 
 int main() {
   auto app = betty::make_application();

@@ -346,4 +346,17 @@ auto set_min_window_size(win32_window& window,
   }
 }
 
+// --- get_client_size -------------------------------------------------------
+
+auto get_client_size(win32_window const& window) -> window_dimensions {
+  RECT rect{};
+  if (GetClientRect(static_cast<HWND>(window.as_hwnd()), &rect)) {
+    return {
+      static_cast<uint32_t>(rect.right - rect.left),
+      static_cast<uint32_t>(rect.bottom - rect.top)
+    };
+  }
+  return default_window_size;
+}
+
 } // namespace betty::platform
