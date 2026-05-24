@@ -33,6 +33,10 @@ inline constexpr auto operator~(cell_attr a) -> cell_attr {
   return static_cast<cell_attr>(~static_cast<uint8_t>(a));
 }
 
+inline constexpr auto to_uint8(cell_attr a) -> uint8_t {
+  return static_cast<uint8_t>(a);
+}
+
 // ===========================================================================
 // terminal_color — packed 8-bit-per-channel colour + flags
 // ===========================================================================

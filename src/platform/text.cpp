@@ -2,6 +2,7 @@
 #include "gfx.hpp"
 #include "gfx_impl.hpp"
 #include "error.hpp"
+#include "terminal/types.hpp"
 #include <d3d11.h>
 #include <d3dcompiler.h>
 #include <dwrite.h>
@@ -1034,15 +1035,16 @@ auto glyph_renderer::draw_grid(d3d_device const& device,
     ++quad_count;
   };
 
-  // Attribute bit constants (mirror terminal::cell_attr).
-  constexpr uint8_t k_attr_bold          = 1 << 0;
-  constexpr uint8_t k_attr_italic        = 1 << 1;
-  constexpr uint8_t k_attr_faint         = 1 << 2;
-  constexpr uint8_t k_attr_underline     = 1 << 3;
-  constexpr uint8_t k_attr_strikethrough = 1 << 4;
-  constexpr uint8_t k_attr_reverse       = 1 << 5;
-  constexpr uint8_t k_attr_wide          = 1 << 6;
-  constexpr uint8_t k_attr_wide_tail     = 1 << 7;
+  // Attribute bit constants (canonical: terminal::cell_attr).
+  using terminal::cell_attr;
+  constexpr uint8_t k_attr_bold          = terminal::to_uint8(cell_attr::bold);
+  constexpr uint8_t k_attr_italic        = terminal::to_uint8(cell_attr::italic);
+  constexpr uint8_t k_attr_faint         = terminal::to_uint8(cell_attr::faint);
+  constexpr uint8_t k_attr_underline     = terminal::to_uint8(cell_attr::underline);
+  constexpr uint8_t k_attr_strikethrough = terminal::to_uint8(cell_attr::strikethrough);
+  constexpr uint8_t k_attr_reverse       = terminal::to_uint8(cell_attr::reverse);
+  constexpr uint8_t k_attr_wide          = terminal::to_uint8(cell_attr::wide);
+  constexpr uint8_t k_attr_wide_tail     = terminal::to_uint8(cell_attr::wide_tail);
 
   // Only draw the cursor if it lies within the visible area.
   bool const cursor_visible =
@@ -1323,7 +1325,7 @@ void glyph_renderer::prepare_unicode_glyphs(
     d3d_device const& device,
     std::span<const render_cell> cells) const
 {
-  constexpr uint8_t k_attr_wide_tail = 1 << 7;
+  constexpr uint8_t k_attr_wide_tail = terminal::to_uint8(terminal::cell_attr::wide_tail);
 
   for (auto const& cell : cells) {
     if (cell.codepoint <= 127) continue;

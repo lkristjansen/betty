@@ -191,7 +191,7 @@ auto make_application() -> std::expected<Application, std::error_code> {
     }
   );
   if (!window_result) {
-    util::log_error(window_result.error(), "create window");
+    util::show_fatal_error(window_result.error(), "create window");
     return std::unexpected(window_result.error());
   }
   auto window = std::move(*window_result);
@@ -199,7 +199,7 @@ auto make_application() -> std::expected<Application, std::error_code> {
   // 2. Create D3D11 device
   auto device_result = platform::make_device();
   if (!device_result) {
-    util::log_error(device_result.error(), "create device");
+    util::show_fatal_error(device_result.error(), "create device");
     return std::unexpected(device_result.error());
   }
   auto device = std::move(*device_result);
@@ -212,7 +212,7 @@ auto make_application() -> std::expected<Application, std::error_code> {
     }
   );
   if (!swap_chain_result) {
-    util::log_error(swap_chain_result.error(), "create swap chain");
+    util::show_fatal_error(swap_chain_result.error(), "create swap chain");
     return std::unexpected(swap_chain_result.error());
   }
   auto swap_chain = std::move(*swap_chain_result);
@@ -220,7 +220,7 @@ auto make_application() -> std::expected<Application, std::error_code> {
   // 4. Create render target view
   auto rtv_result = platform::make_render_target_view(device, swap_chain);
   if (!rtv_result) {
-    util::log_error(rtv_result.error(), "create render target view");
+    util::show_fatal_error(rtv_result.error(), "create render target view");
     return std::unexpected(rtv_result.error());
   }
   auto rtv = std::move(*rtv_result);
@@ -230,7 +230,7 @@ auto make_application() -> std::expected<Application, std::error_code> {
     device, platform::default_window_size
   );
   if (!renderer_result) {
-    util::log_error(renderer_result.error(), "create glyph renderer");
+    util::show_fatal_error(renderer_result.error(), "create glyph renderer");
     return std::unexpected(renderer_result.error());
   }
   auto renderer = std::move(*renderer_result);
@@ -252,7 +252,7 @@ auto make_application() -> std::expected<Application, std::error_code> {
   if (shell_result) {
     shell = std::move(*shell_result);
   } else {
-    util::log_error(shell_result.error(), "Failed to create shell process");
+    util::show_fatal_error(shell_result.error(), "Failed to create shell process");
     shell_creation_failed = true;
   }
 
