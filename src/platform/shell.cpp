@@ -25,6 +25,7 @@ extern "C" void WINAPI ClosePseudoConsole(HPCON hPC);
 #include <string_view>
 
 #include "error.hpp"
+#include "util/log.hpp"
 
 namespace betty::platform {
 
@@ -45,30 +46,35 @@ struct shell_impl {
   std::string   raw_buffer;         // Raw ConPTY output (unfiltered)
   std::condition_variable output_cv;
 
-  // Destructor handles the hard resource cleanup.
-  // shell::~shell() sends "exit" and waits for the child process before
-  // this destructor runs, so the handles are ready to be released.
-  ~shell_impl() {
-    // 1. Cancel any blocking synchronous I/O the read thread might be
+  // Initiate thread shutdown before the jthread destructor runs.
+  // Must be called BEFORE shell_impl is destroyed so that the read thread
+  // is unblocked and joined cleanly.
+  void shutdown() noexcept {
+    // 1. Signal the read thread to stop at its next loop iteration.
+    read_thread.request_stop();
+
+    // 2. Cancel any blocking synchronous I/O the read thread might be
     //    stuck on (ReadFile on the output pipe).  This must happen
     //    BEFORE the jthread destructor runs, otherwise join() blocks
     //    indefinitely on a still-pending ReadFile.
     if (read_thread.joinable()) {
-      CancelSynchronousIo(read_thread.native_handle());
+      if (!CancelSynchronousIo(read_thread.native_handle())) {
+        util::log_error(make_win32_error(), "shell shutdown: CancelSynchronousIo failed");
+      }
     }
 
-    // 2. Close the ConPTY early.  This also closes the write-end of the
+    // 3. Close the ConPTY early.  This also closes the write-end of the
     //    output pipe (conpty_output), causing ReadFile to return EOF
     //    as a secondary unblocking mechanism.
     hpc.reset();
 
-    // 3. jthread's destructor automatically calls request_stop() then
-    //    join().  The thread will have already exited due to step 1
-    //    (ReadFile was cancelled) so join() returns promptly.
-
-    // 4. All remaining handles (process, pipes) are closed automatically
-    //    by their scoped_* destructors when shell_impl is destroyed.
+    // 4. Wake any consumers blocked on output_cv so they don't hang.
+    output_cv.notify_all();
   }
+
+  // All member destructors (jthread, handles, pipes) run automatically
+  // in reverse declaration order.  shutdown() must have been called first.
+  ~shell_impl() = default;
 
   shell_impl(shell_impl const&) = delete;
   shell_impl& operator=(shell_impl const&) = delete;
@@ -94,9 +100,11 @@ shell::~shell() {
       TerminateProcess(p->process.get(), 1);
   }
 
-  // 3. impl_ is destroyed here, which invokes shell_impl's destructor.
-  //    The destructor closes the ConPTY (unblocking the read thread),
-  //    joins the jthread, and closes all remaining handles.
+  // 3. Shut down the read thread gracefully before destroying shell_impl.
+  p->shutdown();
+
+  // 4. impl_ is destroyed here.  shell_impl's =default destructor joins
+  //    the jthread and closes all remaining handles.
 }
 shell::shell(shell&&) noexcept = default;
 shell& shell::operator=(shell&&) noexcept = default;
@@ -116,6 +124,9 @@ void read_thread_fn(shell_impl* p, std::stop_token stoken) {
     BOOL ok = ReadFile(p->output_pipe.get(), read_buf, sizeof(read_buf), &bytes_read, nullptr);
 
     if (!ok || bytes_read == 0) {
+      if (!stoken.stop_requested()) {
+        util::log_error(make_win32_error(), "shell read thread I/O error");
+      }
       p->output_cv.notify_one();
       break;
     }
