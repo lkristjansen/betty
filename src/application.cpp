@@ -2,6 +2,13 @@
 #include "util/log.hpp"
 #include <algorithm>
 
+namespace {
+
+constexpr uint32_t k_min_columns = 80;
+constexpr uint32_t k_min_rows    = 1;
+
+} // anonymous namespace
+
 namespace betty {
 
 // ===========================================================================
@@ -40,8 +47,8 @@ void application::on_resize(uint32_t width, uint32_t height, bool completed) {
     uint32_t const cell_w = renderer_ctx_.cell_width();
     uint32_t const cell_h = renderer_ctx_.cell_height();
 
-    uint32_t const new_cols = std::max(80u, width / cell_w);
-    uint32_t const new_rows = std::max(1u, height / cell_h);
+    uint32_t const new_cols = std::max(k_min_columns, width / cell_w);
+    uint32_t const new_rows = std::max(k_min_rows, height / cell_h);
 
     if (new_cols != session_.cols() || new_rows != session_.rows()) {
       session_.resize(new_cols, new_rows);
@@ -160,9 +167,9 @@ auto make_application() -> std::expected<application, std::error_code> {
     util::show_fatal_error(shell_result.error(), "Failed to create shell process");
   }
 
-  // 5. Set minimum window size: 80 columns × 1 row.
-  uint32_t const min_win_width  = 80 * cell_w;
-  uint32_t const min_win_height = 1 * cell_h;
+  // 5. Set minimum window size.
+  uint32_t const min_win_width  = k_min_columns * cell_w;
+  uint32_t const min_win_height = k_min_rows * cell_h;
   platform::set_min_window_size(window, min_win_width, min_win_height);
 
   // 6. Create terminal session.

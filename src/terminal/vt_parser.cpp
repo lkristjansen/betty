@@ -2,6 +2,13 @@
 #include <charconv>
 #include <string_view>
 
+namespace {
+
+constexpr uint32_t k_osc_buffer_max   = 1024;
+constexpr uint32_t k_max_title_length = 255;
+
+} // anonymous namespace
+
 namespace betty::terminal {
 
 // ===========================================================================
@@ -77,8 +84,10 @@ auto vt_parser::split_params() -> std::span<const uint32_t> {
 // ===========================================================================
 
 void vt_parser::dispatch(char const final_byte) {
-  if (final_byte == 'm') {
-    // ── SGR ────────────────────────────────────────────────────────────
+  switch (final_byte) {
+
+  // ── SGR ──────────────────────────────────────────────────────────────
+  case 'm': {
     auto const params = split_params();
     size_t i = 0;
 
@@ -213,29 +222,27 @@ void vt_parser::dispatch(char const final_byte) {
   }
 
   // ── ED: Erase in Display ────────────────────────────────────────────
-  if (final_byte == 'J') {
+  case 'J': {
     auto const params = split_params();
-    uint32_t const mode = params[0];
     output_.push_back(action{
       .type = action_type::erase_display,
-      .count = mode
+      .count = params[0]
     });
     return;
   }
 
   // ── EL: Erase in Line ───────────────────────────────────────────────
-  if (final_byte == 'K') {
+  case 'K': {
     auto const params = split_params();
-    uint32_t const mode = params[0];
     output_.push_back(action{
       .type = action_type::erase_line,
-      .count = mode
+      .count = params[0]
     });
     return;
   }
 
   // ── IL: Insert Lines ────────────────────────────────────────────────
-  if (final_byte == 'L') {
+  case 'L': {
     auto const params = split_params();
     uint32_t const count = (params.size() > 0 && params[0] > 0) ? params[0] : 1;
     output_.push_back(action{
@@ -246,7 +253,7 @@ void vt_parser::dispatch(char const final_byte) {
   }
 
   // ── DL: Delete Lines ────────────────────────────────────────────────
-  if (final_byte == 'M') {
+  case 'M': {
     auto const params = split_params();
     uint32_t const count = (params.size() > 0 && params[0] > 0) ? params[0] : 1;
     output_.push_back(action{
@@ -257,7 +264,7 @@ void vt_parser::dispatch(char const final_byte) {
   }
 
   // ── SU: Scroll Up ───────────────────────────────────────────────────
-  if (final_byte == 'S') {
+  case 'S': {
     auto const params = split_params();
     uint32_t const count = (params.size() > 0 && params[0] > 0) ? params[0] : 1;
     output_.push_back(action{
@@ -268,7 +275,7 @@ void vt_parser::dispatch(char const final_byte) {
   }
 
   // ── SD: Scroll Down ─────────────────────────────────────────────────
-  if (final_byte == 'T') {
+  case 'T': {
     auto const params = split_params();
     uint32_t const count = (params.size() > 0 && params[0] > 0) ? params[0] : 1;
     output_.push_back(action{
@@ -279,7 +286,7 @@ void vt_parser::dispatch(char const final_byte) {
   }
 
   // ── DECSTBM: Set scrolling region ───────────────────────────────────
-  if (final_byte == 'r') {
+  case 'r': {
     auto const params = split_params();
     uint32_t const top = (params.size() > 0) ? params[0] : 1;
     uint32_t const bottom = (params.size() > 1) ? params[1] : 0;
@@ -292,7 +299,7 @@ void vt_parser::dispatch(char const final_byte) {
   }
 
   // ── ICH: Insert Characters ──────────────────────────────────────────
-  if (final_byte == '@') {
+  case '@': {
     auto const params = split_params();
     uint32_t const count = (params.size() > 0 && params[0] > 0) ? params[0] : 1;
     output_.push_back(action{
@@ -303,7 +310,7 @@ void vt_parser::dispatch(char const final_byte) {
   }
 
   // ── DCH: Delete Characters ──────────────────────────────────────────
-  if (final_byte == 'P') {
+  case 'P': {
     auto const params = split_params();
     uint32_t const count = (params.size() > 0 && params[0] > 0) ? params[0] : 1;
     output_.push_back(action{
@@ -314,7 +321,7 @@ void vt_parser::dispatch(char const final_byte) {
   }
 
   // ── ECH: Erase Characters ────────────────────────────────────────────
-  if (final_byte == 'X') {
+  case 'X': {
     auto const params = split_params();
     uint32_t const count = (params.size() > 0 && params[0] > 0) ? params[0] : 1;
     output_.push_back(action{
@@ -325,42 +332,54 @@ void vt_parser::dispatch(char const final_byte) {
   }
 
   // ── Cursor movement ─────────────────────────────────────────────────
-  auto const [p1, p2] = parse_params();
+  case 'A':  // CUU — Cursor Up
+  case 'B':  // CUD — Cursor Down
+  case 'C':  // CUF — Cursor Forward
+  case 'D':  // CUB — Cursor Back
+  case 'H':  // CUP — Cursor Position
+  case 'f':  // HVP — Horizontal Vertical Position
+  {
+    // Parse_params() returns ANSI-defaulted (p1, p2) suitable for all
+    // cursor-movement sequences.
+    auto const [p1, p2] = parse_params();
 
-  switch (final_byte) {
-  case 'A': // CUU — Cursor Up
-    output_.push_back(action{
-      .type = action_type::move_cursor_up,
-      .count = p1
-    });
-    return;
-  case 'B': // CUD — Cursor Down
-    output_.push_back(action{
-      .type = action_type::move_cursor_down,
-      .count = p1
-    });
-    return;
-  case 'C': // CUF — Cursor Forward
-    output_.push_back(action{
-      .type = action_type::move_cursor_forward,
-      .count = p1
-    });
-    return;
-  case 'D': // CUB — Cursor Back
-    output_.push_back(action{
-      .type = action_type::move_cursor_back,
-      .count = p1
-    });
-    return;
-  case 'H':   // CUP — Cursor Position
-  case 'f': { // HVP — Horizontal Vertical Position
-    output_.push_back(action{
-      .type = action_type::move_cursor,
-      .row = (p1 > 0) ? p1 - 1 : 0,
-      .col = (p2 > 0) ? p2 - 1 : 0
-    });
+    switch (final_byte) {
+    case 'A':
+      output_.push_back(action{
+        .type = action_type::move_cursor_up,
+        .count = p1
+      });
+      return;
+    case 'B':
+      output_.push_back(action{
+        .type = action_type::move_cursor_down,
+        .count = p1
+      });
+      return;
+    case 'C':
+      output_.push_back(action{
+        .type = action_type::move_cursor_forward,
+        .count = p1
+      });
+      return;
+    case 'D':
+      output_.push_back(action{
+        .type = action_type::move_cursor_back,
+        .count = p1
+      });
+      return;
+    case 'H':
+    case 'f':
+      output_.push_back(action{
+        .type = action_type::move_cursor,
+        .row = (p1 > 0) ? p1 - 1 : 0,
+        .col = (p2 > 0) ? p2 - 1 : 0
+      });
+      return;
+    }
     return;
   }
+
   default:
     // Unrecognised final byte → discard the whole sequence.
     return;
@@ -391,9 +410,9 @@ void vt_parser::dispatch_osc() {
   // Ignore empty title.
   if (title.empty()) return;
 
-  // Truncate to 255 characters.
-  if (title.size() > 255) {
-    title = title.substr(0, 255);
+  // Truncate to max length.
+  if (title.size() > k_max_title_length) {
+    title = title.substr(0, k_max_title_length);
   }
 
   output_.push_back(action{
@@ -600,7 +619,7 @@ auto vt_parser::parse(unsigned char const byte) -> std::span<const action> {
       state_ = state::osc_esc;
       return output_;
     default:
-      if (osc_buffer_.size() < 1024) {
+      if (osc_buffer_.size() < k_osc_buffer_max) {
         osc_buffer_ += static_cast<char>(byte);
       }
       return output_;

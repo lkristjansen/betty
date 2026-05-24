@@ -27,6 +27,13 @@ extern "C" void WINAPI ClosePseudoConsole(HPCON hPC);
 #include "error.hpp"
 #include "util/log.hpp"
 
+namespace {
+
+constexpr uint32_t k_read_buffer_size        = 4096;
+constexpr DWORD    k_process_exit_timeout_ms = 2000;
+
+} // anonymous namespace
+
 namespace betty::platform {
 
 // ===========================================================================
@@ -96,7 +103,7 @@ shell::~shell() {
   // 2. Wait for process to exit (2 second timeout),
   //    then forcefully terminate if it didn't.
   if (p->process) {
-    if (WaitForSingleObject(p->process.get(), 2000) != WAIT_OBJECT_0)
+    if (WaitForSingleObject(p->process.get(), k_process_exit_timeout_ms) != WAIT_OBJECT_0)
       TerminateProcess(p->process.get(), 1);
   }
 
@@ -117,7 +124,7 @@ auto shell::native_handle() const noexcept -> shell_handle {
 namespace {
 
 void read_thread_fn(shell_impl* p, std::stop_token stoken) {
-  char read_buf[4096];
+  char read_buf[k_read_buffer_size];
 
   while (!stoken.stop_requested()) {
     DWORD bytes_read = 0;

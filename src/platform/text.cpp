@@ -36,6 +36,20 @@ inline constexpr uint32_t k_atlas_rows   = 16u;  // 8 regular + 8 italic
 inline constexpr uint32_t k_atlas_glyphs = 256u;  // ASCII 0–127, regular & italic
 inline constexpr uint32_t k_glyph_padding = 1u;   // px each side
 
+inline constexpr float    k_wide_cell_factor           = 2.0f;
+inline constexpr float    k_normal_cell_factor         = 1.0f;
+inline constexpr float    k_color_norm_div             = 255.0f;
+inline constexpr float    k_faint_intensity            = 0.5f;
+inline constexpr float    k_full_intensity             = 1.0f;
+inline constexpr uint32_t k_ascii_max                  = 127;
+inline constexpr uint32_t k_italic_slot_offset         = 128;
+inline constexpr float    k_bold_offset_px             = 1.0f;
+inline constexpr float    k_underline_thickness_px     = 2.0f;
+inline constexpr float    k_strikethrough_position     = 0.4f;
+inline constexpr float    k_strikethrough_thickness_px  = 2.0f;
+inline constexpr uint32_t k_wide_col_advance           = 2;
+inline constexpr uint32_t k_normal_col_advance         = 1;
+
 // ===========================================================================
 // Vertex and constant-buffer layouts
 // ===========================================================================
@@ -1119,7 +1133,7 @@ auto glyph_renderer::draw_grid(d3d_device const& device,
       }
 
       bool const is_wide = (cell.attr & k_attr_wide) != 0;
-      float const glyph_cell_width = is_wide ? 2.0f : 1.0f;
+      float const glyph_cell_width = is_wide ? k_wide_cell_factor : k_normal_cell_factor;
       float const x0 = static_cast<float>(col * impl_->cell_width);
       float const x1 = x0 + glyph_cell_width * static_cast<float>(impl_->cell_width);
 
@@ -1135,15 +1149,15 @@ auto glyph_renderer::draw_grid(d3d_device const& device,
       auto const& fg_src = effective_reverse ? cell.bg : cell.fg;
       auto const& bg_src = effective_reverse ? cell.fg : cell.bg;
 
-      float const br = static_cast<float>(bg_src.r) / 255.0f;
-      float const bgg = static_cast<float>(bg_src.g) / 255.0f;
-      float const bb = static_cast<float>(bg_src.b) / 255.0f;
+      float const br = static_cast<float>(bg_src.r) / k_color_norm_div;
+      float const bgg = static_cast<float>(bg_src.g) / k_color_norm_div;
+      float const bb = static_cast<float>(bg_src.b) / k_color_norm_div;
 
-      // Faint reduces glyph intensity by 50%. Background is unaffected.
-      float const intensity = (cell.attr & k_attr_faint) ? 0.5f : 1.0f;
-      float const fr = static_cast<float>(fg_src.r) / 255.0f * intensity;
-      float const fg_f = static_cast<float>(fg_src.g) / 255.0f * intensity;
-      float const fb = static_cast<float>(fg_src.b) / 255.0f * intensity;
+      // Faint reduces glyph intensity. Background is unaffected.
+      float const intensity = (cell.attr & k_attr_faint) ? k_faint_intensity : k_full_intensity;
+      float const fr = static_cast<float>(fg_src.r) / k_color_norm_div * intensity;
+      float const fg_f = static_cast<float>(fg_src.g) / k_color_norm_div * intensity;
+      float const fb = static_cast<float>(fg_src.b) / k_color_norm_div * intensity;
 
       // Background quad — always emitted.
       emit_bg_quad(x0, y0, x1, y1, br, bgg, bb);
@@ -1151,12 +1165,12 @@ auto glyph_renderer::draw_grid(d3d_device const& device,
       // Foreground glyph — only if the cell is not a space.
       char32_t const cp = cell.codepoint;
       if (cp != U' ' && cp != 0) {
-        if (cp <= 127) {
+        if (cp <= k_ascii_max) {
           unsigned char const glyph = static_cast<unsigned char>(cp);
 
-          // Italic uses slots 128–255 (rows 8–15 in the atlas).
+          // Italic uses upper half of atlas slots.
           uint32_t const slot_idx =
-              glyph + ((cell.attr & k_attr_italic) ? 128u : 0u);
+              glyph + ((cell.attr & k_attr_italic) ? k_italic_slot_offset : 0u);
           auto& slot = impl_->glyph_slots[slot_idx];
 
           emit_glyph_quad(x0, y0, x1, y1,
@@ -1165,7 +1179,7 @@ auto glyph_renderer::draw_grid(d3d_device const& device,
 
           // Bold: synthetic double-draw with 1px horizontal offset.
           if (cell.attr & k_attr_bold) {
-            emit_glyph_quad(x0 + 1.0f, y0, x1 + 1.0f, y1,
+            emit_glyph_quad(x0 + k_bold_offset_px, y0, x1 + k_bold_offset_px, y1,
                            slot.u0, slot.v0, slot.u1, slot.v1,
                            fr, fg_f, fb, atlas_kind::static_atlas);
           }
@@ -1180,7 +1194,7 @@ auto glyph_renderer::draw_grid(d3d_device const& device,
                            fr, fg_f, fb, atlas_kind::dyn_atlas);
 
             if (cell.attr & k_attr_bold) {
-              emit_glyph_quad(x0 + 1.0f, y0, x1 + 1.0f, y1,
+              emit_glyph_quad(x0 + k_bold_offset_px, y0, x1 + k_bold_offset_px, y1,
                              slot.u0, slot.v0, slot.u1, slot.v1,
                              fr, fg_f, fb, atlas_kind::dyn_atlas);
             }
@@ -1191,19 +1205,19 @@ auto glyph_renderer::draw_grid(d3d_device const& device,
 
       // Underline: thin solid quad at cell bottom.
       if (cell.attr & k_attr_underline) {
-        float const uy0 = y1 - 2.0f;
+        float const uy0 = y1 - k_underline_thickness_px;
         emit_bg_quad(x0, uy0, x1, y1, fr, fg_f, fb);
       }
 
-      // Strikethrough: thin solid quad at ~40% from top.
+      // Strikethrough: thin solid quad.
       if (cell.attr & k_attr_strikethrough) {
-        float const sy0 = y0 + static_cast<float>(impl_->cell_height) * 0.4f;
-        float const sy1 = sy0 + 2.0f;
+        float const sy0 = y0 + static_cast<float>(impl_->cell_height) * k_strikethrough_position;
+        float const sy1 = sy0 + k_strikethrough_thickness_px;
         emit_bg_quad(x0, sy0, x1, sy1, fr, fg_f, fb);
       }
 
-      // Advance column: 2 for wide, 1 for normal.
-      col += is_wide ? 2 : 1;
+      // Advance column.
+      col += is_wide ? k_wide_col_advance : k_normal_col_advance;
     }
   }
 
