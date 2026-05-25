@@ -15,62 +15,6 @@ auto ansi_csi(char const* suffix) -> std::string {
   return std::string(k_csi) + suffix;
 }
 
-// ===========================================================================
-// Shift lookup table — maps vk_code to (unshifted, shifted) character.
-// Letters are handled arithmetically from their vk_code range.
-// ===========================================================================
-
-struct key_mapping {
-  vk_code vk;
-  char unshifted;
-  char shifted;
-};
-
-constexpr key_mapping k_shift_table[] = {
-  // Digits 0–9
-  {vk_code::printable_0, '0', ')'},
-  {static_cast<vk_code>('1'), '1', '!'},
-  {static_cast<vk_code>('2'), '2', '@'},
-  {static_cast<vk_code>('3'), '3', '#'},
-  {static_cast<vk_code>('4'), '4', '$'},
-  {static_cast<vk_code>('5'), '5', '%'},
-  {static_cast<vk_code>('6'), '6', '^'},
-  {static_cast<vk_code>('7'), '7', '&'},
-  {static_cast<vk_code>('8'), '8', '*'},
-  {vk_code::printable_9, '9', '('},
-  // Punctuation
-  {vk_code::semicolon,     ';', ':'},
-  {vk_code::comma,         ',', '<'},
-  {vk_code::period_,       '.', '>'},
-  {vk_code::slash,         '/', '?'},
-  {vk_code::backslash,     '\\', '|'},
-  {vk_code::bracket_left,  '[', '{'},
-  {vk_code::bracket_right, ']', '}'},
-  {vk_code::apostrophe,    '\'', '"'},
-  {vk_code::minus,         '-', '_'},
-  {vk_code::equal_,        '=', '+'},
-  {vk_code::grave,         '`', '~'},
-};
-
-// Return the character for a given key and shift state.
-// Returns '\0' if the vk_code has no printable representation.
-[[nodiscard]] auto lookup_shifted(vk_code vk, bool shift) -> char {
-  // Letters a–z
-  if (vk >= vk_code::printable_a && vk <= vk_code::printable_z) {
-    char const c = static_cast<char>(static_cast<uint32_t>(vk));
-    return shift ? static_cast<char>(c - 32) : c;  // uppercase / lowercase
-  }
-
-  // Digits and punctuation — lookup table
-  for (auto const& m : k_shift_table) {
-    if (m.vk == vk) {
-      return shift ? m.shifted : m.unshifted;
-    }
-  }
-
-  return '\0';
-}
-
 } // anonymous namespace
 
 // ===========================================================================
@@ -80,9 +24,16 @@ constexpr key_mapping k_shift_table[] = {
 auto input_handler::on_keydown(vk_code vk, bool control, bool shift, bool alt) const
   -> std::string {
 
+  // shift is unused here — printable characters (including Shift and AltGr
+  // combos) are now handled by the WM_CHAR path via write_char().
+  // This function handles only non-printable keys and Ctrl+letter combos.
+  (void)shift;
+
   std::string base;
 
   // --- Ctrl+letter → control character (0x01–0x1A) ---
+  // Covers A–Z only. Ctrl+non-ASCII letters (Æ, Ø, Å) arrive through
+  // WM_CHAR already translated by Windows to the correct control codepoint.
   if (control && vk >= vk_code::printable_a && vk <= vk_code::printable_z) {
     char const c = static_cast<char>(
       static_cast<uint32_t>(vk) - static_cast<uint32_t>(vk_code::printable_a) + 1);
@@ -123,20 +74,6 @@ auto input_handler::on_keydown(vk_code vk, bool control, bool shift, bool alt) c
     case vk_code::f12: base = ansi_csi("24~");  break;
 
     default: break;
-    }
-  }
-
-  // --- Printable characters with shift support ---
-  if (base.empty()) {
-    char const c = lookup_shifted(vk, shift);
-    if (c != '\0') {
-      base = std::string(1, c);
-    } else {
-      // Fallback: any printable ASCII vk_code value passes through as-is.
-      uint32_t const cp = static_cast<uint32_t>(vk);
-      if (cp >= 0x20 && cp <= 0x7E) {
-        base = std::string(1, static_cast<char>(cp));
-      }
     }
   }
 

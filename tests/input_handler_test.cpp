@@ -4,32 +4,38 @@
 using namespace betty::terminal;
 
 // ===========================================================================
-// Printable ASCII
+// Printable ASCII — no longer handled by on_keydown
 // ===========================================================================
+// Printable characters (letters, digits, punctuation) are now delivered
+// through WM_CHAR → write_char() and encoded as UTF-8.  on_keydown()
+// returns empty for these — it only handles non-printable keys and
+// Ctrl+letter combos.
 
-TEST_CASE("Input — printable lowercase letter", "[input][printable]") {
+TEST_CASE("Input — printable lowercase letter returns empty", "[input][printable]") {
     input_handler h;
-    CHECK(h.on_keydown(vk_code::printable_a, false, false, false) == "a");
+    CHECK(h.on_keydown(vk_code::printable_a, false, false, false).empty());
 }
 
-TEST_CASE("Input — printable uppercase via vk_code (capital)", "[input][printable]") {
+TEST_CASE("Input — printable uppercase via vk_code returns empty", "[input][printable]") {
     input_handler h;
-    // vk_code values map A-Z to their ASCII codes 0x41-0x5A
-    CHECK(h.on_keydown(static_cast<vk_code>('A'), false, false, false) == "A");
+    CHECK(h.on_keydown(static_cast<vk_code>('A'), false, false, false).empty());
 }
 
-TEST_CASE("Input — printable digit", "[input][printable]") {
+TEST_CASE("Input — printable digit returns empty", "[input][printable]") {
     input_handler h;
-    CHECK(h.on_keydown(static_cast<vk_code>('0'), false, false, false) == "0");
-    CHECK(h.on_keydown(static_cast<vk_code>('9'), false, false, false) == "9");
+    CHECK(h.on_keydown(static_cast<vk_code>('0'), false, false, false).empty());
+    CHECK(h.on_keydown(static_cast<vk_code>('9'), false, false, false).empty());
 }
 
-TEST_CASE("Input — printable punctuation", "[input][printable]") {
+TEST_CASE("Input — printable punctuation returns empty", "[input][printable]") {
     input_handler h;
-    // Punctuation characters ('.', '/', etc.) don't collide with vk_code
-    // enum values since function keys now live above 0xFF.
-    CHECK(h.on_keydown(static_cast<vk_code>('.'), false, false, false) == ".");
-    CHECK(h.on_keydown(static_cast<vk_code>('/'), false, false, false) == "/");
+    CHECK(h.on_keydown(static_cast<vk_code>('.'), false, false, false).empty());
+    CHECK(h.on_keydown(static_cast<vk_code>('/'), false, false, false).empty());
+}
+
+TEST_CASE("Input — uppercase Z returns empty", "[input][printable]") {
+    input_handler h;
+    CHECK(h.on_keydown(static_cast<vk_code>('Z'), false, false, false).empty());
 }
 
 // ===========================================================================
@@ -206,8 +212,8 @@ TEST_CASE("Input — Alt prefixes keys with ESC", "[input][alt]") {
     CHECK(h.on_keydown(vk_code::arrow_up, false, false, true) == "\x1B\x1B[A");
     // Alt+Enter → ESC + CR
     CHECK(h.on_keydown(vk_code::enter, false, false, true) == "\x1B\r");
-    // Alt+a → ESC + a
-    CHECK(h.on_keydown(vk_code::printable_a, false, false, true) == "\x1B" "a");
+    // Alt+printable — returns empty (printable path removed; WM_CHAR handles this)
+    CHECK(h.on_keydown(vk_code::printable_a, false, false, true).empty());
 }
 
 // ===========================================================================
@@ -221,11 +227,4 @@ TEST_CASE("Input — Ctrl+Alt letter sends ESC + ctrl-char", "[input][edge]") {
     CHECK(result == "\x1B\x01");
 }
 
-// ===========================================================================
-// Edge: uppercase letters via vk_code
-// ===========================================================================
 
-TEST_CASE("Input — uppercase Z returns Z", "[input][printable]") {
-    input_handler h;
-    CHECK(h.on_keydown(static_cast<vk_code>('Z'), false, false, false) == "Z");
-}

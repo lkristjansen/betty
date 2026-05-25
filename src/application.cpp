@@ -35,6 +35,10 @@ void application::on_key(platform::vk_code vk, bool ctrl, bool shift, bool alt) 
   session_.write_keyboard(vk, ctrl, shift, alt);
 }
 
+void application::on_char(uint32_t codepoint) {
+  session_.write_char(codepoint);
+}
+
 void application::on_resize(uint32_t width, uint32_t height, bool completed) {
   // Ignore zero-area resize (minimized window).
   if (width == 0 || height == 0) return;
@@ -61,10 +65,16 @@ void application::on_resize(uint32_t width, uint32_t height, bool completed) {
 // ===========================================================================
 
 int application::run() {
-  // Keyboard callback.
+  // Keyboard callback (WM_KEYDOWN — non-printable keys, Ctrl+letter).
   platform::set_key_callback(window_,
     [this](platform::vk_code vk, bool ctrl, bool shift, bool alt) {
       on_key(vk, ctrl, shift, alt);
+    });
+
+  // Character callback (WM_CHAR — printable Unicode, layout-translated).
+  platform::set_char_callback(window_,
+    [this](uint32_t codepoint) {
+      on_char(codepoint);
     });
 
   // Resize callback.

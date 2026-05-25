@@ -25,6 +25,7 @@ private:
 
   // Callback handlers — wrapped in lambdas passed to the window.
   void on_key(platform::vk_code vk, bool ctrl, bool shift, bool alt);
+  void on_char(uint32_t codepoint);
   void on_resize(uint32_t width, uint32_t height, bool completed);
 
   platform::win32_window window_;

@@ -5,6 +5,7 @@ add_executable(betty_tests
     vt_parser_test.cpp
     grid_test.cpp
     input_handler_test.cpp
+    utf8_test.cpp
 )
 
 target_link_libraries(betty_tests PRIVATE

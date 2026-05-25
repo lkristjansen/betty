@@ -38,26 +38,14 @@ auto map_vk(WPARAM wParam) -> vk_code {
   case VK_F10:     return vk_code::f10;
   case VK_F11:     return vk_code::f11;
   case VK_F12:     return vk_code::f12;
-  case VK_OEM_1:       return vk_code::semicolon;      // ; / :
-  case VK_OEM_COMMA:   return vk_code::comma;          // , / <
-  case VK_OEM_PERIOD:  return vk_code::period_;         // . / >
-  case VK_OEM_2:       return vk_code::slash;          // / / ?
-  case VK_OEM_5:       return vk_code::backslash;      // \ / |
-  case VK_OEM_4:       return vk_code::bracket_left;   // [ / {
-  case VK_OEM_6:       return vk_code::bracket_right;  // ] / }
-  case VK_OEM_7:       return vk_code::apostrophe;     // ' / "
-  case VK_OEM_MINUS:   return vk_code::minus;          // - / _
-  case VK_OEM_PLUS:    return vk_code::equal_;          // = / +
-  case VK_OEM_3:       return vk_code::grave;          // ` / ~
+  // All OEM (punctuation) keys — fall through to default.
+  // Printable characters for any keyboard layout are handled by the
+  // WM_CHAR path; WM_KEYDOWN only needs to map non-printable keys
+  // and A–Z for Ctrl+letter control-code generation.
   default:
-    // A–Z, 0–9, and other printable ASCII.
-    if ((wParam >= 'A' && wParam <= 'Z') ||
-        (wParam >= '0' && wParam <= '9')) {
-      // Convert A–Z to lowercase to match our vk_code enum.
-      if (wParam >= 'A' && wParam <= 'Z') {
-        return static_cast<vk_code>(wParam - 'A' + 'a');
-      }
-      return static_cast<vk_code>(wParam);
+    // A–Z only — needed for Ctrl+letter control-code generation.
+    if (wParam >= 'A' && wParam <= 'Z') {
+      return static_cast<vk_code>(wParam - 'A' + 'a');
     }
     return vk_code::unknown;
   }

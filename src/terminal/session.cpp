@@ -1,5 +1,6 @@
 #include "session.hpp"
 #include "util/log.hpp"
+#include "util/utf8.hpp"
 
 namespace betty::terminal {
 namespace {
@@ -68,6 +69,23 @@ void terminal_session::write_keyboard(platform::vk_code vk, bool ctrl,
   if (!bytes.empty()) {
     if (auto res = platform::write_shell_input(*shell_, bytes); !res) {
       util::log_error(res.error(), "write shell input");
+      shell_input_failed_ = true;
+    }
+  }
+}
+
+// ===========================================================================
+// write_char
+// ===========================================================================
+
+void terminal_session::write_char(uint32_t codepoint) {
+  if (!shell_ || !platform::is_shell_running(*shell_)) return;
+  if (shell_input_failed_) return;
+
+  std::string bytes = util::utf8_encode(codepoint);
+  if (!bytes.empty()) {
+    if (auto res = platform::write_shell_input(*shell_, bytes); !res) {
+      util::log_error(res.error(), "write shell char input");
       shell_input_failed_ = true;
     }
   }

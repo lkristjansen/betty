@@ -37,9 +37,14 @@ public:
 
   // --- Input/output ---------------------------------------------------------
 
-  // Translate a keyboard event into shell input bytes and write them.
-  // Handles scrollback navigation (Ctrl+Shift+arrows/pgup/pgdn) internally.
+  // Translate a keyboard event (WM_KEYDOWN) into shell input bytes and write them.
+  // Handles only non-printable keys + Ctrl+letter combos.
+  // Printable characters arrive via write_char() (WM_CHAR path).
+  // Scrollback navigation (Ctrl+Shift+arrows/pgup/pgdn) intercepted internally.
   void write_keyboard(platform::vk_code vk, bool ctrl, bool shift, bool alt);
+
+  // Write a single Unicode codepoint (from WM_CHAR) to the shell as UTF-8.
+  void write_char(uint32_t codepoint);
 
   // Drain shell output into the grid.
   // Returns `dead` on first detection that the shell has exited, then `dead`
