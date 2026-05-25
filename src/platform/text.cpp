@@ -435,6 +435,9 @@ auto rasterize_glyph(IDWriteFactory* factory, IDWriteFontFace1* font_face,
       uint8_t const alpha = static_cast<uint8_t>((static_cast<uint32_t>(r) + g + b) / 3);
       if (alpha == 0) continue;
 
+      // buf_idx: absolute pixel position within the full atlas texture.
+      // dy and dx are already absolute (relative to slot origin + k_glyph_padding),
+      // so no additional offset is needed.
       size_t const buf_idx = static_cast<size_t>(dy) * atlas_width + static_cast<size_t>(dx);
       size_t const pixel_offset = buf_idx * 4;
       // Alpha-only atlas: glyph shapes stored as white with alpha coverage.
@@ -1336,19 +1339,22 @@ auto glyph_renderer::ensure_glyph_cached(char32_t cp, d3d_device const& device) 
   uint32_t const slot_x = (slot % p.k_dyn_atlas_cols) * p.slot_width;
   uint32_t const slot_y = (slot / p.k_dyn_atlas_cols) * p.slot_height;
 
-  size_t const buf_pixels = static_cast<size_t>(p.dyn_atlas_width) *
-                             static_cast<size_t>(p.dyn_atlas_height);
+  size_t const buf_pixels = static_cast<size_t>(p.slot_width) *
+                             static_cast<size_t>(p.slot_height);
   std::vector<uint8_t> staging_buffer(buf_pixels * 4, 0);
 
   constexpr float k_font_size = static_cast<float>(k_font_size_px);
 
+  // Pass slot origin (0, 0) — since the staging buffer is only one slot,
+  // absolute positions would overflow.  origin_x/y computed inside
+  // rasterize_glyph become relative to the slot, matching the buffer size.
   bool const rasterized = rasterize_glyph(
     p.dwrite_factory.Get(),
     p.font_face.Get(),
     k_font_size,
     static_cast<uint32_t>(cp),
-    slot_x, slot_y,
-    p.dyn_atlas_width,
+    0, 0,
+    p.slot_width,
     p.cell_width, p.cell_height,
     p.baseline_y,
     staging_buffer
@@ -1366,7 +1372,7 @@ auto glyph_renderer::ensure_glyph_cached(char32_t cp, d3d_device const& device) 
 
     ctx->UpdateSubresource(p.dyn_atlas_texture.Get(), 0, &box,
                             staging_buffer.data(),
-                            p.dyn_atlas_width * 4, 0);
+                            p.slot_width * 4, 0);
   }
 
   // Store in index regardless of rasterization success (avoids retrying).
