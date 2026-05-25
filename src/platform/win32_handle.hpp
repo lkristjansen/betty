@@ -2,6 +2,7 @@
 #include <windows.h>
 
 #include <bit>
+#include <concepts>
 #include <cstdint>
 #include <type_traits>
 #include <utility>
@@ -9,29 +10,38 @@
 namespace betty::platform {
 
 // ===========================================================================
+// handle_traits_concept — compile-time contract for win32_handle traits
+// ===========================================================================
+// Every Traits type passed to win32_handle must satisfy:
+//   - handle_type is a pointer-sized, trivially-copyable type
+//   - invalid is a constexpr uintptr_t sentinel
+//   - close(handle_type) is callable
+
+template <typename T>
+concept handle_traits_concept = requires {
+  typename T::handle_type;
+  requires sizeof(typename T::handle_type) == sizeof(std::uintptr_t);
+  requires std::is_trivially_copyable_v<typename T::handle_type>;
+  { T::invalid } -> std::convertible_to<std::uintptr_t>;
+  T::close(std::declval<typename T::handle_type>());
+};
+
+// ===========================================================================
 // win32_handle — move-only RAII wrapper for Windows handle types
 // ===========================================================================
 //
-// Parameterized by a Traits type that supplies:
+// Parameterized by a Traits type satisfying handle_traits_concept:
 //   typename Traits::handle_type      — the raw handle type (HANDLE, HPCON, …)
 //   static constexpr uintptr_t invalid — sentinel for "no handle"
 //   static void close(handle_type)    — deleter
-//
-// Compile-time guards:
-//   - handle_type must be pointer-sized (sizeof == sizeof(uintptr_t))
-//   - handle_type must be trivially copyable (required by bit_cast)
 // ===========================================================================
 
-template <typename Traits>
+template <handle_traits_concept Traits>
 class win32_handle {
 public:
   using handle_type = typename Traits::handle_type;
 
 private:
-  static_assert(sizeof(handle_type) == sizeof(std::uintptr_t),
-                "handle_type must be a pointer-sized type");
-  static_assert(std::is_trivially_copyable_v<handle_type>,
-                "handle_type must be trivially copyable");
 
   static handle_type sentinel() noexcept {
     return std::bit_cast<handle_type>(Traits::invalid);

@@ -51,7 +51,7 @@ void terminal_grid::write_char(char32_t cp) {
       row[cursor_.col()] = grid_cell{cp, sgr_.fg, sgr_.bg,
                                       sgr_.attr | cell_attr::wide};
     }
-    cursor_.increment_col();
+    cursor_.increment_col(cols_);
 
     // Mark the continuation cell.
     if (cursor_.col() < cols_ && rows_ > 0) {
@@ -59,14 +59,14 @@ void terminal_grid::write_char(char32_t cp) {
       row[cursor_.col()] = grid_cell{U' ', sgr_.fg, sgr_.bg,
                                       sgr_.attr | cell_attr::wide_tail};
     }
-    cursor_.increment_col();
+    cursor_.increment_col(cols_);
   } else {
     // Normal width-1 character.
     if (cursor_.col() < cols_ && rows_ > 0) {
       auto row = buffer_.active_row(cursor_.row());
       row[cursor_.col()] = grid_cell{cp, sgr_.fg, sgr_.bg, sgr_.attr};
     }
-    cursor_.increment_col();
+    cursor_.increment_col(cols_);
   }
 
   // Auto-wrap: if cursor is past the last column, move to next row.
@@ -75,7 +75,7 @@ void terminal_grid::write_char(char32_t cp) {
     if (cursor_.at_scroll_bottom()) {
       scroll_up();
     } else {
-      cursor_.increment_row();
+      cursor_.increment_row(rows_ > 0 ? rows_ - 1 : 0);
     }
   }
 }
@@ -101,7 +101,7 @@ void terminal_grid::write_combining_char(char32_t cp) {
       auto row = buffer_.active_row(cursor_.row());
       row[cursor_.col()] = grid_cell{cp, sgr_.fg, sgr_.bg, sgr_.attr};
     }
-    cursor_.increment_col();
+    cursor_.increment_col(cols_);
     return;
   }
 
@@ -114,7 +114,7 @@ void terminal_grid::write_combining_char(char32_t cp) {
     if (rows_ > 0) {
       row[cursor_.col()] = grid_cell{cp, sgr_.fg, sgr_.bg, sgr_.attr};
     }
-    cursor_.increment_col();
+    cursor_.increment_col(cols_);
     return;
   }
 
@@ -124,7 +124,7 @@ void terminal_grid::write_combining_char(char32_t cp) {
     if (rows_ > 0) {
       row[cursor_.col()] = grid_cell{cp, sgr_.fg, sgr_.bg, sgr_.attr};
     }
-    cursor_.increment_col();
+    cursor_.increment_col(cols_);
     return;
   }
 
@@ -138,7 +138,7 @@ void terminal_grid::write_combining_char(char32_t cp) {
     if (rows_ > 0) {
       row[cursor_.col()] = grid_cell{cp, sgr_.fg, sgr_.bg, sgr_.attr};
     }
-    cursor_.increment_col();
+    cursor_.increment_col(cols_);
   }
 }
 
@@ -257,7 +257,7 @@ void terminal_grid::newline() {
     scroll_up();  // region-aware scroll
     // cursor stays at scroll_bottom_
   } else {
-    cursor_.increment_row();
+    cursor_.increment_row(rows_ > 0 ? rows_ - 1 : 0);
   }
 }
 

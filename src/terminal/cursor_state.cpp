@@ -24,12 +24,12 @@ void cursor_state::move_back(uint32_t n) {
   col_ = (col_ > n) ? col_ - n : 0;
 }
 
-void cursor_state::increment_row() {
-  row_++;
+void cursor_state::increment_row(uint32_t max_row) {
+  row_ = std::min(row_ + 1, max_row);
 }
 
-void cursor_state::increment_col() {
-  col_++;
+void cursor_state::increment_col(uint32_t max_col) {
+  col_ = std::min(col_ + 1, max_col);
 }
 
 void cursor_state::reset_col() {

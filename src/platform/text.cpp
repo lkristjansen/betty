@@ -2,6 +2,7 @@
 #include "gfx.hpp"
 #include "gfx_impl.hpp"
 #include "error.hpp"
+#include "debug_print.hpp"
 #include "terminal/types.hpp"
 #include <d3d11.h>
 #include <d3dcompiler.h>
@@ -260,7 +261,7 @@ auto compile_shader(const char* source, const char* entry_point, const char* tar
                            entry_point, target, 0, 0,
                            blob, error_blob.GetAddressOf());
   if (FAILED(hr) && error_blob) {
-    OutputDebugStringA(static_cast<const char*>(error_blob->GetBufferPointer()));
+    debug_println("{}", static_cast<const char*>(error_blob->GetBufferPointer()));
   }
   return hr;
 }

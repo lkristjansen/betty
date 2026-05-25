@@ -22,8 +22,11 @@ public:
   void move_forward(uint32_t n, uint32_t max_col);
   void move_back(uint32_t n);
 
-  void increment_row();
-  void increment_col();
+  // Increment and clamp. max_col for increment_col is the column count
+  // (cols_), not the last valid index, because the cursor is allowed to
+  // reach cols_ to signal auto-wrap.
+  void increment_row(uint32_t max_row);
+  void increment_col(uint32_t max_col);
 
   void reset_col();
   void set_col(uint32_t col, uint32_t max_col);

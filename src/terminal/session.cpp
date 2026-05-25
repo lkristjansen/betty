@@ -2,6 +2,20 @@
 #include "util/log.hpp"
 
 namespace betty::terminal {
+namespace {
+
+// Try to read output from a live shell.
+// Uses std::optional::and_then to form a monadic pipeline:
+//   shell_ → check running → read_output → optional<string>
+[[nodiscard]] auto read_from_live_shell(
+    std::optional<platform::shell>& shell) -> std::optional<std::string> {
+  return shell.and_then([](platform::shell& s) -> std::optional<std::string> {
+    if (!platform::is_shell_running(s)) return std::nullopt;
+    return platform::read_shell_output_raw(s);
+  });
+}
+
+} // anonymous namespace
 
 // ===========================================================================
 // construction
@@ -64,14 +78,15 @@ void terminal_session::write_keyboard(platform::vk_code vk, bool ctrl,
 // ===========================================================================
 
 auto terminal_session::process_output() -> session_status {
-  if (shell_ && platform::is_shell_running(*shell_)) {
-    std::string raw = platform::read_shell_output_raw(*shell_);
-    if (!raw.empty()) {
-      grid_.write_bytes(raw);
+  // Shell is alive: read and process output.
+  if (auto raw = read_from_live_shell(shell_)) {
+    if (!raw->empty()) {
+      grid_.write_bytes(*raw);
     }
     return session_status::ok;
   }
 
+  // Shell exists but dead.
   if (shell_ && !platform::is_shell_running(*shell_)) {
     if (!exit_notified_) {
       grid_.write_bytes("[shell exited]\r\n");
