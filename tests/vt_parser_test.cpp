@@ -1,4 +1,5 @@
 #include <catch2/catch_test_macros.hpp>
+#include <ranges>
 #include "terminal/vt_parser.hpp"
 
 using namespace betty::terminal;
@@ -911,12 +912,12 @@ TEST_CASE("CSI ICH/DCH/ECH — parser returns to ground", "[csi][task14][recover
 static auto parse_sequence_all(vt_parser& p, std::string_view bytes)
     -> std::vector<action>
 {
-    std::vector<action> result;
-    for (auto const b : bytes) {
-        auto v = p.parse(static_cast<unsigned char>(b));
-        for (auto& a : v) result.push_back(std::move(a));
-    }
-    return result;
+    return bytes
+        | std::views::transform([&p](char b) {
+            return p.parse(static_cast<unsigned char>(b));
+          })
+        | std::views::join
+        | std::ranges::to<std::vector<action>>();
 }
 
 static auto parse_sequence_all(std::string_view bytes)

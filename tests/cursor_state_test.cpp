@@ -149,10 +149,25 @@ TEST_CASE("cursor_state — in_scroll_region", "[cursor_state]") {
 
 TEST_CASE("cursor_state — increment_row/col", "[cursor_state]") {
     cursor_state c;
-    c.increment_row();
-    c.increment_col();
+    c.increment_row(10);
+    c.increment_col(10);
     CHECK(c.row() == 1);
     CHECK(c.col() == 1);
+}
+
+TEST_CASE("cursor_state — increment_row clamps at max", "[cursor_state]") {
+    cursor_state c;
+    c.move_to(10, 0, 10, 10);
+    c.increment_row(10);
+    CHECK(c.row() == 10);
+}
+
+TEST_CASE("cursor_state — increment_col reaches column count for auto-wrap", "[cursor_state]") {
+    cursor_state c;
+    // col=9 is last valid index; column count=10 allows cursor past it
+    c.move_to(0, 9, 10, 9);
+    c.increment_col(10);
+    CHECK(c.col() == 10);
 }
 
 TEST_CASE("cursor_state — reset_col", "[cursor_state]") {
