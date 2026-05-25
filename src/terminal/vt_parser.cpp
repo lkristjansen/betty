@@ -440,6 +440,11 @@ auto vt_parser::parse(unsigned char const byte) -> std::span<const action> {
     case '\n':
       output_.push_back(action{.type = action_type::newline});
       return output_;
+    case 0x08:  // BS (backspace) — move cursor left one cell
+      output_.push_back(action{.type = action_type::move_cursor_back, .count = 1});
+      return output_;
+    case 0x7F:   // DEL — silently ignore (control character, not printable)
+      return output_;
     case 0x1B:   // ESC
       state_ = state::escape;
       return output_;
