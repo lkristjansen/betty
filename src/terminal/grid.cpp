@@ -42,7 +42,12 @@ void terminal_grid::write_char(char32_t cp) {
     // Wide character — needs 2 cells.
     // If at or past the second-to-last column, wrap to next line first.
     if (cursor_.col() >= cols_ - 1 && cols_ > 0) {
+      // newline() will consume pending_wrap_ if set; we want the explicit wrap
+      // to take effect regardless, so clear it first to avoid suppression.
+      pending_wrap_ = false;
       newline();
+    } else if (cursor_.col() < cols_) {
+      pending_wrap_ = false;
     }
 
     // Write the actual glyph to the first cell.
@@ -62,6 +67,10 @@ void terminal_grid::write_char(char32_t cp) {
     cursor_.increment_col(cols_);
   } else {
     // Normal width-1 character.
+    // Clear any pending wrap before writing — we're not at the right margin.
+    if (cursor_.col() < cols_) {
+      pending_wrap_ = false;
+    }
     if (cursor_.col() < cols_ && rows_ > 0) {
       auto row = buffer_.active_row(cursor_.row());
       row[cursor_.col()] = grid_cell{cp, sgr_.fg, sgr_.bg, sgr_.attr};
@@ -77,6 +86,9 @@ void terminal_grid::write_char(char32_t cp) {
     } else {
       cursor_.increment_row(rows_ > 0 ? rows_ - 1 : 0);
     }
+    // Set pending-wrap flag so the next \n (from e.g. ConPTY's \r\n)
+    // does not cause a double row advance.
+    pending_wrap_ = true;
   }
 }
 
@@ -173,24 +185,30 @@ void terminal_grid::apply(action const& a) {
     newline();
     break;
   case action_type::move_cursor:
+    pending_wrap_ = false;
     cursor_.move_to(a.row, a.col, max_row, max_col);
     break;
   case action_type::move_cursor_up:
+    pending_wrap_ = false;
     cursor_.move_up(a.count, max_row);
     break;
   case action_type::move_cursor_down:
+    pending_wrap_ = false;
     cursor_.move_down(a.count, max_row);
     break;
   case action_type::move_cursor_forward:
+    pending_wrap_ = false;
     cursor_.move_forward(a.count, max_col);
     break;
   case action_type::move_cursor_back:
+    pending_wrap_ = false;
     cursor_.move_back(a.count);
     break;
   case action_type::save_cursor:
     cursor_.save();
     break;
   case action_type::restore_cursor:
+    pending_wrap_ = false;
     cursor_.restore(max_row, max_col);
     break;
   case action_type::sgr_reset:
@@ -251,6 +269,13 @@ void terminal_grid::apply(action const& a) {
 // ===========================================================================
 
 void terminal_grid::newline() {
+  // If the cursor was just moved by auto-wrap, suppress this line feed
+  // to prevent a double row advance (standard ECMA-48 / DECAWM behaviour).
+  if (pending_wrap_) {
+    pending_wrap_ = false;
+    return;
+  }
+
   cursor_.reset_col();
 
   if (cursor_.at_scroll_bottom()) {

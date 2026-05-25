@@ -148,6 +148,10 @@ private:
   // Observer for out-of-band terminal events (OSC window title, etc.).
   std::function<void(std::string_view)> on_window_title_;
 
+  // Pending auto-wrap flag. Set when write_char wraps to the next row;
+  // consumed by the next \n to prevent a double row advance.
+  bool pending_wrap_ = false;
+
   // --- Private helpers -----------------------------------------------------
 
   void write_cell(uint32_t col, char32_t cp, terminal_color fg, terminal_color bg, cell_attr attr);

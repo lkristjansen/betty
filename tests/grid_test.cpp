@@ -144,6 +144,86 @@ TEST_CASE("Grid — newline at last row scrolls", "[grid][newline][scroll]") {
 }
 
 // ===========================================================================
+// pending-wrap flag — prevents double row advance with \r\n after auto-wrap
+// ===========================================================================
+
+TEST_CASE("Grid — pending-wrap: \\r\\n after auto-wrap does not double-advance", "[grid][pending_wrap]") {
+    // Simulate shell output filling exactly one line and then sending \r\n.
+    terminal_grid g(3, 3);
+    // Fill the last cell to trigger auto-wrap.
+    g.write_char(U'a');  // (0,0) → (0,1)
+    g.write_char(U'b');  // (0,1) → (0,2)
+    g.write_char(U'c');  // (0,2) → auto-wrap to (1,0), pending_wrap_=true
+
+    // Now simulate \r\n from the shell.
+    g.write_bytes("\r\n");
+
+    // Cursor should be at (1,0), NOT (2,0).
+    CHECK(g.cursor_row() == 1);
+    CHECK(g.cursor_col() == 0);
+    // Row 0 should still have 'a','b','c'.
+    CHECK(g.cell(0, 0).codepoint == U'a');
+    CHECK(g.cell(0, 1).codepoint == U'b');
+    CHECK(g.cell(0, 2).codepoint == U'c');
+}
+
+TEST_CASE("Grid — pending-wrap: subsequent write after auto-wrap works", "[grid][pending_wrap]") {
+    terminal_grid g(3, 3);
+    // Trigger auto-wrap.
+    g.write_char(U'a');  // (0,0) → (0,1)
+    g.write_char(U'b');  // (0,1) → (0,2)
+    g.write_char(U'c');  // (0,2) → auto-wrap to (1,0)
+
+    // Write another character (should clear pending_wrap_ and work normally).
+    g.write_char(U'd');
+
+    CHECK(g.cell(1, 0).codepoint == U'd');
+    CHECK(g.cursor_row() == 1);
+    CHECK(g.cursor_col() == 1);
+}
+
+TEST_CASE("Grid — pending-wrap: \\n alone after auto-wrap does not double-advance", "[grid][pending_wrap]") {
+    terminal_grid g(3, 3);
+    // Trigger auto-wrap.
+    g.write_char(U'a');
+    g.write_char(U'b');
+    g.write_char(U'c');  // auto-wrap to (1,0)
+
+    // Send \n via apply.
+    action a;
+    a.type = action_type::newline;
+    g.apply(a);
+
+    // Cursor should still be at (1,0) — pending_wrap consumed the \n.
+    CHECK(g.cursor_row() == 1);
+    CHECK(g.cursor_col() == 0);
+}
+
+TEST_CASE("Grid — pending-wrap: \\r\\n without prior auto-wrap advances normally", "[grid][pending_wrap]") {
+    terminal_grid g(3, 3);
+    g.write_char(U'a');  // (0,0) → (0,1)
+    // No auto-wrap triggered.
+    g.write_bytes("\r\n");
+    // Should advance to (1,0) normally.
+    CHECK(g.cursor_row() == 1);
+    CHECK(g.cursor_col() == 0);
+}
+
+TEST_CASE("Grid — pending-wrap: cursor movement clears flag", "[grid][pending_wrap]") {
+    terminal_grid g(5, 5);
+    // Trigger auto-wrap.
+    g.write_bytes("ABCDE");  // fills row 0, auto-wraps to (1,0)
+
+    // Now move cursor via escape sequence — should clear pending_wrap_.
+    g.write_bytes("\x1B[3;3H");  // CUP to row 3, col 3 (0-based: 2,2)
+
+    // Then \r\n should work normally (not be consumed).
+    g.write_bytes("\r\n");
+    CHECK(g.cursor_row() == 3);
+    CHECK(g.cursor_col() == 0);
+}
+
+// ===========================================================================
 // carriage_return
 // ===========================================================================
 
