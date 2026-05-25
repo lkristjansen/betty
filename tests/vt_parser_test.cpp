@@ -67,15 +67,22 @@ TEST_CASE("Ground state — two printable characters", "[ground]") {
 
 TEST_CASE("Ground state — C0 controls silently ignored", "[ground]") {
     vt_parser p;
-    // SOH (0x01), BS (0x08), SUB (0x1A)
+    // SOH (0x01), SUB (0x1A)
     CHECK(p.parse(0x01).empty());
-    CHECK(p.parse(0x08).empty());
     CHECK(p.parse(0x1A).empty());
 
     // Parser should still be in ground state — printable chars work.
     auto const v = p.parse('A');
     REQUIRE(v.size() == 1);
     CHECK(v[0].type == action_type::write_char);
+}
+
+TEST_CASE("Ground state — BS (0x08) produces move_cursor_back", "[ground]") {
+    vt_parser p;
+    auto const v = p.parse(0x08);
+    REQUIRE(v.size() == 1);
+    CHECK(v[0].type == action_type::move_cursor_back);
+    CHECK(v[0].count == 1);
 }
 
 // ===========================================================================
