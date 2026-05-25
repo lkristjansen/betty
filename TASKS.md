@@ -120,7 +120,7 @@ Each task is a vertical slice: when completed, the user can launch `betty.exe` a
 
 ---
 
-### 15. Unicode + wide characters
+### 15. ✅ Unicode + wide characters
 **User sees:** Emoji, CJK characters, and other Unicode text render without crashing. Wide characters (Chinese, Japanese, Korean) occupy two cells. Combining characters (accents, diacritics) display correctly over their base character.
 - Handle UTF-8 decoding of ConPTY output
 - Detect wide characters (East Asian Width = Wide/Fullwidth); allocate two grid cells
@@ -129,14 +129,14 @@ Each task is a vertical slice: when completed, the user can launch `betty.exe` a
 
 ---
 
-### 16. Signal handling
+### 16. ✅ Signal handling
 **User sees:** Ctrl+C interrupts a running command (e.g. `ping -t localhost`). Ctrl+Break behaves similarly. The shell becomes responsive again.
 - Handle Ctrl+C (0x03) and Ctrl+Break via ConPTY
 - Send the appropriate control character to the ConPTY input pipe
 
 ---
 
-### 17. Shell exit cleanup
+### 17. ✅ Shell exit cleanup
 **User sees:** Typing `exit` or closing the shell process closes the betty window cleanly. No lingering processes or zombie windows.
 - Detect shell process exit (ConPTY pipe closure or process handle signal)
 - Close the window gracefully (`PostQuitMessage` or `DestroyWindow`)
@@ -144,7 +144,7 @@ Each task is a vertical slice: when completed, the user can launch `betty.exe` a
 
 ---
 
-### 18. Unknown sequence resilience
+### 18. ✅ Unknown sequence resilience
 **User sees:** Malformed or unrecognised escape sequences do not crash betty. Garbled text or unsupported sequences are silently ignored (or rendered as plain text where safe).
 - ANSI parser handles unrecognised sequences gracefully
 - Invalid UTF-8 sequences do not crash or corrupt the grid
