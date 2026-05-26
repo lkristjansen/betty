@@ -179,9 +179,10 @@ struct glyph_renderer::impl {
   ComPtr<IDWriteTextFormat> text_format;
 
   // Font metrics
-  uint32_t cell_width  = 0;
-  uint32_t cell_height = 0;
-  float    baseline_y  = 0.0f;  // distance from cell top to baseline (px)
+  uint32_t cell_width            = 0;
+  uint32_t cell_height           = 0;
+  float    baseline_y            = 0.0f;  // distance from cell top to baseline (px)
+  uint32_t design_units_per_em   = 0;     // font design units per em
 
   // Glyph atlas
   ComPtr<ID3D11Texture2D>          atlas_texture;
@@ -329,6 +330,7 @@ auto rasterize_glyph(IDWriteFactory* factory, IDWriteFontFace1* font_face,
                      uint32_t atlas_width,
                      uint32_t cell_width, uint32_t cell_height,
                      float baseline_y,
+                     uint32_t design_units_per_em,
                      std::vector<uint8_t>& staging_buffer) -> bool {
   // 1. Get glyph index.
   UINT32 const cp32 = static_cast<uint32_t>(codepoint);
@@ -401,10 +403,16 @@ auto rasterize_glyph(IDWriteFactory* factory, IDWriteFontFace1* font_face,
   int const cell_content_x = static_cast<int>(slot_x) + k_glyph_padding;
   int const cell_content_y = static_cast<int>(slot_y) + k_glyph_padding;
 
-  // Center horizontally, but align vertically by the font baseline.
+  // Center horizontally based on the glyph's advance width (consistent
+  // across all glyphs in a monospace font), not the glyph's bounding box
+  // width (which varies per glyph — e.g. box-drawing '├' has a wider
+  // bounds than '│' due to the horizontal branch, which would otherwise
+  // shift their vertical strokes out of alignment).
+  // Align vertically by the font baseline.
   // bounds.top is negative (above the baseline), so adding it shifts
   // the bitmap up so that the baseline lands at baseline_y.
-  int const offset_x = (static_cast<int>(cell_width) - static_cast<int>(bounds_width)) / 2;
+  FLOAT const advance_px = advance * font_size / static_cast<FLOAT>(design_units_per_em);
+  int const offset_x = (static_cast<int>(cell_width) - static_cast<int>(std::round(advance_px))) / 2;
   int const origin_x = cell_content_x + offset_x;
   int const origin_y = cell_content_y + static_cast<int>(std::round(baseline_y)) + bounds.top;
 
@@ -496,6 +504,9 @@ auto make_glyph_renderer(d3d_device const& device, window_dimensions const& wind
                        p->font_face,
                        font_ascent, font_design_units_per_em);
   if (FAILED(hr)) return std::unexpected(make_hresult_error(hr));
+
+  // Cache design units per em for advance-based glyph centering.
+  p->design_units_per_em = font_design_units_per_em;
 
   // Compute baseline position: ascent converted to pixels at raster size.
   p->baseline_y = static_cast<float>(font_ascent) * k_font_size
@@ -595,6 +606,7 @@ auto make_glyph_renderer(d3d_device const& device, window_dimensions const& wind
                          p->atlas_width,
                          p->cell_width, p->cell_height,
                          p->baseline_y,
+                         p->design_units_per_em,
                          staging_buffer);
 
         // Precompute UVs for this slot (content area, excluding padding).
@@ -1357,6 +1369,7 @@ auto glyph_renderer::ensure_glyph_cached(char32_t cp, d3d_device const& device) 
     p.slot_width,
     p.cell_width, p.cell_height,
     p.baseline_y,
+    p.design_units_per_em,
     staging_buffer
   );
 
