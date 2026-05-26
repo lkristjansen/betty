@@ -1069,7 +1069,7 @@ auto glyph_renderer::draw_text(d3d_device const& device,
 auto glyph_renderer::draw_grid(d3d_device const& device,
                                 d3d_render_target_view const& rtv,
                                 std::span<const render_cell> cells,
-                                size2d dims, point2d cursor, uint32_t padding) const
+                                size2d dims, std::optional<point2d> cursor, uint32_t padding) const
   -> std::expected<void, std::error_code> {
 
   auto* context = device.impl_->context.Get();
@@ -1130,9 +1130,9 @@ auto glyph_renderer::draw_grid(d3d_device const& device,
   constexpr uint8_t k_attr_wide          = terminal::to_uint8(cell_attr::wide);
   constexpr uint8_t k_attr_wide_tail     = terminal::to_uint8(cell_attr::wide_tail);
 
-  // Only draw the cursor if it lies within the visible area.
+  // Only draw the cursor if it is set and lies within the visible area.
   bool const cursor_visible =
-      cursor.row < draw_rows && cursor.col < draw_cols;
+      cursor.has_value() && cursor->row < draw_rows && cursor->col < draw_cols;
 
   for (uint32_t row = 0; row < draw_rows; ++row) {
     float const y0 = pad + static_cast<float>(row * impl_->cell_height);
@@ -1156,7 +1156,7 @@ auto glyph_renderer::draw_grid(d3d_device const& device,
       float const x1 = x0 + glyph_cell_width * static_cast<float>(impl_->cell_width);
 
       bool const is_cursor =
-        cursor_visible && row == cursor.row && col == cursor.col;
+        cursor_visible && row == cursor->row && col == cursor->col;
 
       // Resolve effective reverse: cell SGR reverse XOR cursor.
       // The cursor already swaps fg/bg, so if both are active they cancel.

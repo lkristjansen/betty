@@ -25,10 +25,10 @@ public:
 
   // Draw a terminal grid.  Internally calls prepare_unicode_glyphs() before
   // drawing.  `cells` is a row-major flat array of dims.height × dims.width.
-  // `cursor` specifies which cell to render with reverse video; pass
-  // out-of-bounds row/col to suppress the cursor.
+  // `cursor`, if set, specifies which cell to render with reverse video.
+  // Pass std::nullopt to suppress the cursor.
   [[nodiscard]] auto draw_grid(std::span<render_cell const> cells,
-                               size2d dims, point2d cursor, uint32_t padding) const
+                               size2d dims, std::optional<point2d> cursor, uint32_t padding) const
       -> std::expected<void, std::error_code>;
 
   // Present the back buffer.  Returns an error on device loss.

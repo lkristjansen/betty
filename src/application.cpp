@@ -1,6 +1,7 @@
 #include "application.hpp"
 #include "util/log.hpp"
 #include <algorithm>
+#include <optional>
 
 namespace {
 
@@ -118,11 +119,10 @@ int application::run() {
     auto const cells = session_.render_cells();
     if (!cells.empty()) {
       platform::size2d const dims{session_.cols(), session_.rows()};
-      // Suppress cursor when scrolled back (pass out-of-bounds position).
-      platform::point2d const cursor{
-        session_.is_following_output() ? session_.cursor_row() : session_.rows(),
-        session_.is_following_output() ? session_.cursor_col() : session_.cols()
-      };
+      // Suppress cursor when scrolled back.
+      auto const cursor = session_.is_following_output()
+          ? std::optional<platform::point2d>{}
+          : std::optional<platform::point2d>{{session_.cursor_row(), session_.cursor_col()}};
       if (auto draw_result = renderer_ctx_.draw_grid(cells, dims, cursor, platform::k_padding_px);
           !draw_result) {
         util::log_error(draw_result.error(), "draw grid");
@@ -184,7 +184,7 @@ auto make_application() -> std::expected<application, std::error_code> {
   if (shell_result) {
     shell = std::move(*shell_result);
   } else {
-    util::show_fatal_error(shell_result.error(), "Failed to create shell process");
+    util::log_error(shell_result.error(), "Failed to create shell process");
   }
 
   // 5. Set minimum window size with padding accounted for.

@@ -2,6 +2,7 @@
 #include <cstdint>
 #include <expected>
 #include <memory>
+#include <optional>
 #include <span>
 #include <string_view>
 #include <system_error>
@@ -56,13 +57,12 @@ struct glyph_renderer {
   // Non-ASCII codepoints are rendered from the dynamic glyph cache
   // (populated by prepare_unicode_glyphs).  Wide characters span 2 cells.
   //
-  // `cursor` specifies which cell to render with reverse video
-  // (foreground/background swapped).  Pass values outside the visible area to
-  // suppress the cursor (it will not be drawn).
+  // `cursor`, if set, specifies which cell to render with reverse video
+  // (foreground/background swapped).  Pass std::nullopt to suppress the cursor.
   // `padding` offsets the grid origin from the top-left corner in pixels.
   [[nodiscard]] auto draw_grid(d3d_device const& device, d3d_render_target_view const& rtv,
                                 std::span<const render_cell> cells,
-                                size2d dims, point2d cursor, uint32_t padding) const
+                                size2d dims, std::optional<point2d> cursor, uint32_t padding) const
       -> std::expected<void, std::error_code>;
 
   ~glyph_renderer();
