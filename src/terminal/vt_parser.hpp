@@ -2,12 +2,41 @@
 #include <cstdint>
 #include <span>
 #include <string>
-#include <utility>
 #include <vector>
 
 #include "types.hpp"
 
 namespace betty::terminal {
+
+// ===========================================================================
+// vt_bytes — byte classification helpers for VT/ANSI parsing
+// ===========================================================================
+
+namespace vt_bytes {
+
+constexpr bool is_c0_control(unsigned char b)     { return b < 0x20; }
+constexpr bool is_del(unsigned char b)            { return b == 0x7F; }
+constexpr bool is_esc(unsigned char b)            { return b == 0x1B; }
+constexpr bool is_bel(unsigned char b)            { return b == 0x07; }
+constexpr bool is_bs(unsigned char b)             { return b == 0x08; }
+constexpr bool is_cr(unsigned char b)             { return b == '\r'; }
+constexpr bool is_lf(unsigned char b)             { return b == '\n'; }
+constexpr bool is_ascii_printable(unsigned char b) { return b >= 0x20 && b < 0x7F; }
+
+constexpr bool is_utf8_lead(unsigned char b)      { return b >= 0xC0 && b <= 0xF4; }
+constexpr bool is_utf8_continuation(unsigned char b) { return (b & 0xC0u) == 0x80u; }
+
+// Parameter bytes per ECMA-48 are 0x30–0x3B (0-9 and ;).  We also accept
+// 0x3C–0x3F (< = > ?) to accommodate terminal emulators that use '?' as a
+// parameter character (e.g. SGR with '?' interpretation).
+// NOTE: DEC private modes (CSI ? … h/l) treat '?' as an intermediate byte,
+// not a parameter byte.  If private-mode support is added, this range should
+// be narrowed to 0x30–0x3B and '?' handled in csi_entry/csi_intermediate instead.
+constexpr bool is_csi_param(unsigned char b)      { return b >= 0x30 && b <= 0x3F; }
+constexpr bool is_csi_intermediate(unsigned char b) { return b >= 0x20 && b <= 0x2F; }
+constexpr bool is_csi_final(unsigned char b)      { return b >= 0x40 && b <= 0x7E; }
+
+} // namespace vt_bytes
 
 // ===========================================================================
 // action_type — kind of terminal action produced by the VT parser
@@ -78,11 +107,63 @@ private:
     osc_esc,     // saw ESC inside OSC — waiting for \ to confirm ST
   };
 
+  // Returned by each state handler: should parse() return output_ to the
+  // caller, or loop and re-process the same byte in the new state?
+  enum class handler_result : uint8_t { done, reprocess };
+
+  // ---- UTF-8 decoder --------------------------------------------------
+
+  class utf8_decoder {
+  public:
+    enum class result : uint8_t { incomplete, complete, error };
+
+    // Start decoding from a valid lead byte (0xC0–0xF4).
+    void start(unsigned char lead_byte);
+
+    // Feed a continuation byte (0x80–0xBF).
+    [[nodiscard]] auto continue_byte(unsigned char byte) -> result;
+
+    void reset();
+    [[nodiscard]] auto codepoint() const -> char32_t { return codepoint_; }
+
+  private:
+    char32_t codepoint_ = 0;
+    uint8_t  remaining_ = 0;
+  };
+
+  // -------------------------------------------------------------------
+
   void reset_csi();
   void dispatch(char final_byte);
   void dispatch_osc();
-  [[nodiscard]] auto parse_params() -> std::pair<uint32_t, uint32_t>;
   [[nodiscard]] auto split_params() -> std::span<const uint32_t>;
+
+  // Per-CSI-final-byte dispatch methods.
+  void dispatch_sgr();
+  // Helper for dispatch_sgr: consume 38;5;N or 38;2;R;G;B extended colour.
+  // Returns number of param slots consumed (5 for RGB, 3 for 256-colour, 2 for malformed).
+  [[nodiscard]] auto dispatch_sgr_extended(std::span<const uint32_t> params, size_t i, bool is_bg) -> size_t;
+  void dispatch_ed();
+  void dispatch_el();
+  void dispatch_il();
+  void dispatch_dl();
+  void dispatch_su();
+  void dispatch_sd();
+  void dispatch_decstbm();
+  void dispatch_ich();
+  void dispatch_dch();
+  void dispatch_ech();
+  void dispatch_cursor(char final_byte);
+
+  // Per-state handlers — one for each state in the VT state machine.
+  [[nodiscard]] auto handle_ground(unsigned char byte) -> handler_result;
+  [[nodiscard]] auto handle_utf8_accum(unsigned char byte) -> handler_result;
+  [[nodiscard]] auto handle_escape(unsigned char byte) -> handler_result;
+  [[nodiscard]] auto handle_csi_entry(unsigned char byte) -> handler_result;
+  [[nodiscard]] auto handle_csi_param(unsigned char byte) -> handler_result;
+  [[nodiscard]] auto handle_csi_intermediate(unsigned char byte) -> handler_result;
+  [[nodiscard]] auto handle_osc(unsigned char byte) -> handler_result;
+  [[nodiscard]] auto handle_osc_esc(unsigned char byte) -> handler_result;
 
   state state_ = state::ground;
   std::string param_buffer_;  // collects CSI parameter bytes (digits, ';')
@@ -92,11 +173,7 @@ private:
   std::vector<action> output_;           // actions produced by the current parse()
   std::vector<uint32_t> param_values_;   // split CSI parameter values
 
-  // UTF-8 accumulation state.
-  struct {
-    char32_t codepoint = 0;
-    uint8_t  remaining = 0;  // expected continuation bytes
-  } utf8_;
+  utf8_decoder utf8_;
 };
 
 } // namespace betty::terminal
