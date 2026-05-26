@@ -1,5 +1,6 @@
 #include <catch2/catch_test_macros.hpp>
 #include <ranges>
+#include <string>
 #include "terminal/vt_parser.hpp"
 
 using namespace betty::terminal;
@@ -49,7 +50,7 @@ TEST_CASE("Ground state — printable character", "[ground]") {
     auto const v = p.parse('A');
     REQUIRE(v.size() == 1);
     CHECK(v[0].type == action_type::write_char);
-    CHECK(v[0].codepoint == 65);
+    CHECK(std::get<char32_t>(v[0].payload) == 65);
 }
 
 TEST_CASE("Ground state — two printable characters", "[ground]") {
@@ -57,12 +58,12 @@ TEST_CASE("Ground state — two printable characters", "[ground]") {
     auto const v1 = p.parse('z');
     REQUIRE(v1.size() == 1);
     CHECK(v1[0].type == action_type::write_char);
-    CHECK(v1[0].codepoint == 122);
+    CHECK(std::get<char32_t>(v1[0].payload) == 122);
 
     auto const v2 = p.parse('!');
     REQUIRE(v2.size() == 1);
     CHECK(v2[0].type == action_type::write_char);
-    CHECK(v2[0].codepoint == 33);
+    CHECK(std::get<char32_t>(v2[0].payload) == 33);
 }
 
 TEST_CASE("Ground state — C0 controls silently ignored", "[ground]") {
@@ -82,7 +83,7 @@ TEST_CASE("Ground state — BS (0x08) produces move_cursor_back", "[ground]") {
     auto const v = p.parse(0x08);
     REQUIRE(v.size() == 1);
     CHECK(v[0].type == action_type::move_cursor_back);
-    CHECK(v[0].count == 1);
+    CHECK(std::get<uint32_t>(v[0].payload) == 1);
 }
 
 // ===========================================================================
@@ -105,7 +106,7 @@ TEST_CASE("Escape state — DECSC (ESC 7) emits save_cursor action", "[escape]")
     // State should have returned to ground.
     auto const v2 = p.parse('A');
     REQUIRE(v2.size() == 1);
-    CHECK(v2[0].codepoint == 65);
+    CHECK(std::get<char32_t>(v2[0].payload) == 65);
 }
 
 TEST_CASE("Escape state — DECRC (ESC 8) emits restore_cursor action", "[escape]") {
@@ -125,7 +126,7 @@ TEST_CASE("Escape state — unknown ESC sequence discarded, state recovers", "[e
     auto const v = p.parse('A');
     REQUIRE(v.size() == 1);
     CHECK(v[0].type == action_type::write_char);
-    CHECK(v[0].codepoint == 65);
+    CHECK(std::get<char32_t>(v[0].payload) == 65);
 }
 
 // ===========================================================================
@@ -136,42 +137,42 @@ TEST_CASE("CSI CUU — no param defaults to count=1", "[csi][cuu]") {
     auto const v = parse_sequence("\x1B[A");
     REQUIRE(v.size() == 1);
     CHECK(v[0].type == action_type::move_cursor_up);
-    CHECK(v[0].count == 1);
+    CHECK(std::get<uint32_t>(v[0].payload) == 1);
 }
 
 TEST_CASE("CSI CUU — explicit count", "[csi][cuu]") {
     auto const v = parse_sequence("\x1B[5A");
     REQUIRE(v.size() == 1);
     CHECK(v[0].type == action_type::move_cursor_up);
-    CHECK(v[0].count == 5);
+    CHECK(std::get<uint32_t>(v[0].payload) == 5);
 }
 
 TEST_CASE("CSI CUU — param 0 defaulted to 1", "[csi][cuu]") {
     auto const v = parse_sequence("\x1B[0A");
     REQUIRE(v.size() == 1);
     CHECK(v[0].type == action_type::move_cursor_up);
-    CHECK(v[0].count == 1);
+    CHECK(std::get<uint32_t>(v[0].payload) == 1);
 }
 
 TEST_CASE("CSI CUD", "[csi][cud]") {
     auto const v = parse_sequence("\x1B[3B");
     REQUIRE(v.size() == 1);
     CHECK(v[0].type == action_type::move_cursor_down);
-    CHECK(v[0].count == 3);
+    CHECK(std::get<uint32_t>(v[0].payload) == 3);
 }
 
 TEST_CASE("CSI CUF — multi-digit param", "[csi][cuf]") {
     auto const v = parse_sequence("\x1B[10C");
     REQUIRE(v.size() == 1);
     CHECK(v[0].type == action_type::move_cursor_forward);
-    CHECK(v[0].count == 10);
+    CHECK(std::get<uint32_t>(v[0].payload) == 10);
 }
 
 TEST_CASE("CSI CUB", "[csi][cub]") {
     auto const v = parse_sequence("\x1B[4D");
     REQUIRE(v.size() == 1);
     CHECK(v[0].type == action_type::move_cursor_back);
-    CHECK(v[0].count == 4);
+    CHECK(std::get<uint32_t>(v[0].payload) == 4);
 }
 
 // ===========================================================================
@@ -182,56 +183,56 @@ TEST_CASE("CSI CUP — no params defaults to 1;1", "[csi][cup]") {
     auto const v = parse_sequence("\x1B[H");
     REQUIRE(v.size() == 1);
     CHECK(v[0].type == action_type::move_cursor);
-    CHECK(v[0].row == 0);
-    CHECK(v[0].col == 0);
+    CHECK(std::get<cursor_pos>(v[0].payload).row == 0);
+    CHECK(std::get<cursor_pos>(v[0].payload).col == 0);
 }
 
 TEST_CASE("CSI CUP — row only", "[csi][cup]") {
     auto const v = parse_sequence("\x1B[5H");
     REQUIRE(v.size() == 1);
     CHECK(v[0].type == action_type::move_cursor);
-    CHECK(v[0].row == 4);
-    CHECK(v[0].col == 0);
+    CHECK(std::get<cursor_pos>(v[0].payload).row == 4);
+    CHECK(std::get<cursor_pos>(v[0].payload).col == 0);
 }
 
 TEST_CASE("CSI CUP — row and col", "[csi][cup]") {
     auto const v = parse_sequence("\x1B[5;10H");
     REQUIRE(v.size() == 1);
     CHECK(v[0].type == action_type::move_cursor);
-    CHECK(v[0].row == 4);
-    CHECK(v[0].col == 9);
+    CHECK(std::get<cursor_pos>(v[0].payload).row == 4);
+    CHECK(std::get<cursor_pos>(v[0].payload).col == 9);
 }
 
 TEST_CASE("CSI CUP — param 0 treated as 1", "[csi][cup]") {
     auto const v = parse_sequence("\x1B[0;0H");
     REQUIRE(v.size() == 1);
     CHECK(v[0].type == action_type::move_cursor);
-    CHECK(v[0].row == 0);
-    CHECK(v[0].col == 0);
+    CHECK(std::get<cursor_pos>(v[0].payload).row == 0);
+    CHECK(std::get<cursor_pos>(v[0].payload).col == 0);
 }
 
 TEST_CASE("CSI HVP (f) — same semantics as CUP", "[csi][hvp]") {
     auto const v = parse_sequence("\x1B[8;3f");
     REQUIRE(v.size() == 1);
     CHECK(v[0].type == action_type::move_cursor);
-    CHECK(v[0].row == 7);
-    CHECK(v[0].col == 2);
+    CHECK(std::get<cursor_pos>(v[0].payload).row == 7);
+    CHECK(std::get<cursor_pos>(v[0].payload).col == 2);
 }
 
 TEST_CASE("CSI CUP — empty first param defaults", "[csi][cup]") {
     auto const v = parse_sequence("\x1B[;10H");
     REQUIRE(v.size() == 1);
     CHECK(v[0].type == action_type::move_cursor);
-    CHECK(v[0].row == 0);
-    CHECK(v[0].col == 9);
+    CHECK(std::get<cursor_pos>(v[0].payload).row == 0);
+    CHECK(std::get<cursor_pos>(v[0].payload).col == 9);
 }
 
 TEST_CASE("CSI CUP — empty second param defaults", "[csi][cup]") {
     auto const v = parse_sequence("\x1B[5;H");
     REQUIRE(v.size() == 1);
     CHECK(v[0].type == action_type::move_cursor);
-    CHECK(v[0].row == 4);
-    CHECK(v[0].col == 0);
+    CHECK(std::get<cursor_pos>(v[0].payload).row == 4);
+    CHECK(std::get<cursor_pos>(v[0].payload).col == 0);
 }
 
 // ===========================================================================
@@ -250,8 +251,8 @@ TEST_CASE("Incremental — CUP fed byte-by-byte", "[incremental]") {
     auto const v = p.parse('H');
     REQUIRE(v.size() == 1);
     CHECK(v[0].type == action_type::move_cursor);
-    CHECK(v[0].row == 11);
-    CHECK(v[0].col == 33);
+    CHECK(std::get<cursor_pos>(v[0].payload).row == 11);
+    CHECK(std::get<cursor_pos>(v[0].payload).col == 33);
 }
 
 TEST_CASE("Incremental — state resets after complete CSI", "[incremental]") {
@@ -268,7 +269,7 @@ TEST_CASE("Incremental — state resets after complete CSI", "[incremental]") {
     auto const v2 = p.parse('X');
     REQUIRE(v2.size() == 1);
     CHECK(v2[0].type == action_type::write_char);
-    CHECK(v2[0].codepoint == 88);
+    CHECK(std::get<char32_t>(v2[0].payload) == 88);
 }
 
 // ===========================================================================
@@ -348,7 +349,7 @@ TEST_CASE("Invalid — back-to-back valid sequences", "[invalid]") {
         auto const v = parse_sequence(p, "\x1B[3A");
         REQUIRE(v.size() == 1);
         CHECK(v[0].type == action_type::move_cursor_up);
-        CHECK(v[0].count == 3);
+        CHECK(std::get<uint32_t>(v[0].payload) == 3);
     }
 
     // CUP(5, 2)
@@ -356,8 +357,8 @@ TEST_CASE("Invalid — back-to-back valid sequences", "[invalid]") {
         auto const v = parse_sequence(p, "\x1B[5;2H");
         REQUIRE(v.size() == 1);
         CHECK(v[0].type == action_type::move_cursor);
-        CHECK(v[0].row == 4);
-        CHECK(v[0].col == 1);
+        CHECK(std::get<cursor_pos>(v[0].payload).row == 4);
+        CHECK(std::get<cursor_pos>(v[0].payload).col == 1);
     }
 
     // Newline
@@ -376,16 +377,16 @@ TEST_CASE("CSI intermediate — single intermediate byte before final", "[csi][i
     auto const v = parse_sequence("\x1B[?H");
     REQUIRE(v.size() == 1);
     CHECK(v[0].type == action_type::move_cursor);
-    CHECK(v[0].row == 0);
-    CHECK(v[0].col == 0);
+    CHECK(std::get<cursor_pos>(v[0].payload).row == 0);
+    CHECK(std::get<cursor_pos>(v[0].payload).col == 0);
 }
 
 TEST_CASE("CSI intermediate — multiple intermediate bytes", "[csi][intermediate]") {
     auto const v = parse_sequence("\x1B[?$H");
     REQUIRE(v.size() == 1);
     CHECK(v[0].type == action_type::move_cursor);
-    CHECK(v[0].row == 0);
-    CHECK(v[0].col == 0);
+    CHECK(std::get<cursor_pos>(v[0].payload).row == 0);
+    CHECK(std::get<cursor_pos>(v[0].payload).col == 0);
 }
 
 // ===========================================================================
@@ -396,42 +397,42 @@ TEST_CASE("CSI ED — no param defaults to mode 0", "[csi][ed]") {
     auto const v = parse_sequence("\x1B[J");
     REQUIRE(v.size() == 1);
     CHECK(v[0].type == action_type::erase_display);
-    CHECK(v[0].count == 0);
+    CHECK(std::get<uint32_t>(v[0].payload) == 0);
 }
 
 TEST_CASE("CSI ED — mode 0 (erase to end)", "[csi][ed]") {
     auto const v = parse_sequence("\x1B[0J");
     REQUIRE(v.size() == 1);
     CHECK(v[0].type == action_type::erase_display);
-    CHECK(v[0].count == 0);
+    CHECK(std::get<uint32_t>(v[0].payload) == 0);
 }
 
 TEST_CASE("CSI ED — mode 1 (erase from beginning)", "[csi][ed]") {
     auto const v = parse_sequence("\x1B[1J");
     REQUIRE(v.size() == 1);
     CHECK(v[0].type == action_type::erase_display);
-    CHECK(v[0].count == 1);
+    CHECK(std::get<uint32_t>(v[0].payload) == 1);
 }
 
 TEST_CASE("CSI ED — mode 2 (erase entire display)", "[csi][ed]") {
     auto const v = parse_sequence("\x1B[2J");
     REQUIRE(v.size() == 1);
     CHECK(v[0].type == action_type::erase_display);
-    CHECK(v[0].count == 2);
+    CHECK(std::get<uint32_t>(v[0].payload) == 2);
 }
 
 TEST_CASE("CSI ED — mode 3 (erase display + scrollback)", "[csi][ed]") {
     auto const v = parse_sequence("\x1B[3J");
     REQUIRE(v.size() == 1);
     CHECK(v[0].type == action_type::erase_display);
-    CHECK(v[0].count == 3);
+    CHECK(std::get<uint32_t>(v[0].payload) == 3);
 }
 
 TEST_CASE("CSI ED — missing first param defaults to 0", "[csi][ed]") {
     auto const v = parse_sequence("\x1B[;J");
     REQUIRE(v.size() == 1);
     CHECK(v[0].type == action_type::erase_display);
-    CHECK(v[0].count == 0);
+    CHECK(std::get<uint32_t>(v[0].payload) == 0);
 }
 
 // ===========================================================================
@@ -442,35 +443,35 @@ TEST_CASE("CSI EL — no param defaults to mode 0", "[csi][el]") {
     auto const v = parse_sequence("\x1B[K");
     REQUIRE(v.size() == 1);
     CHECK(v[0].type == action_type::erase_line);
-    CHECK(v[0].count == 0);
+    CHECK(std::get<uint32_t>(v[0].payload) == 0);
 }
 
 TEST_CASE("CSI EL — mode 0 (erase to end of line)", "[csi][el]") {
     auto const v = parse_sequence("\x1B[0K");
     REQUIRE(v.size() == 1);
     CHECK(v[0].type == action_type::erase_line);
-    CHECK(v[0].count == 0);
+    CHECK(std::get<uint32_t>(v[0].payload) == 0);
 }
 
 TEST_CASE("CSI EL — mode 1 (erase from beginning of line)", "[csi][el]") {
     auto const v = parse_sequence("\x1B[1K");
     REQUIRE(v.size() == 1);
     CHECK(v[0].type == action_type::erase_line);
-    CHECK(v[0].count == 1);
+    CHECK(std::get<uint32_t>(v[0].payload) == 1);
 }
 
 TEST_CASE("CSI EL — mode 2 (erase entire line)", "[csi][el]") {
     auto const v = parse_sequence("\x1B[2K");
     REQUIRE(v.size() == 1);
     CHECK(v[0].type == action_type::erase_line);
-    CHECK(v[0].count == 2);
+    CHECK(std::get<uint32_t>(v[0].payload) == 2);
 }
 
 TEST_CASE("CSI EL — missing first param defaults to 0", "[csi][el]") {
     auto const v = parse_sequence("\x1B[;K");
     REQUIRE(v.size() == 1);
     CHECK(v[0].type == action_type::erase_line);
-    CHECK(v[0].count == 0);
+    CHECK(std::get<uint32_t>(v[0].payload) == 0);
 }
 
 // ===========================================================================
@@ -489,14 +490,14 @@ TEST_CASE("CSI ED — with intermediate byte", "[csi][ed]") {
     auto const v = parse_sequence("\x1B[?J");
     REQUIRE(v.size() == 1);
     CHECK(v[0].type == action_type::erase_display);
-    CHECK(v[0].count == 0);
+    CHECK(std::get<uint32_t>(v[0].payload) == 0);
 }
 
 TEST_CASE("CSI EL — with intermediate byte", "[csi][el]") {
     auto const v = parse_sequence("\x1B[?K");
     REQUIRE(v.size() == 1);
     CHECK(v[0].type == action_type::erase_line);
-    CHECK(v[0].count == 0);
+    CHECK(std::get<uint32_t>(v[0].payload) == 0);
 }
 
 // ===========================================================================
@@ -507,28 +508,28 @@ TEST_CASE("OSC — OSC 0 with BEL terminator sets window title", "[osc][bel]") {
     auto const v = parse_sequence("\x1B]0;hello\x07");
     REQUIRE(v.size() == 1);
     CHECK(v[0].type == action_type::set_window_title);
-    CHECK(v[0].title == "hello");
+    CHECK(std::get<std::string>(v[0].payload) == "hello");
 }
 
 TEST_CASE("OSC — OSC 2 with ST terminator sets window title", "[osc][st]") {
     auto const v = parse_sequence("\x1B]2;world\x1B\\");
     REQUIRE(v.size() == 1);
     CHECK(v[0].type == action_type::set_window_title);
-    CHECK(v[0].title == "world");
+    CHECK(std::get<std::string>(v[0].payload) == "world");
 }
 
 TEST_CASE("OSC — OSC 0 with ESC BEL terminator sets window title", "[osc][st-esc-bel-seq]") {
     auto const v = parse_sequence("\x1B]0;pi - project\x1B\x07");
     REQUIRE(v.size() == 1);
     CHECK(v[0].type == action_type::set_window_title);
-    CHECK(v[0].title == "pi - project");
+    CHECK(std::get<std::string>(v[0].payload) == "pi - project");
 }
 
 TEST_CASE("OSC — OSC 1 treated as window title", "[osc][osc1]") {
     auto const v = parse_sequence("\x1B]1;test\x07");
     REQUIRE(v.size() == 1);
     CHECK(v[0].type == action_type::set_window_title);
-    CHECK(v[0].title == "test");
+    CHECK(std::get<std::string>(v[0].payload) == "test");
 }
 
 TEST_CASE("OSC — empty title ignored", "[osc][empty]") {
@@ -554,8 +555,8 @@ TEST_CASE("OSC — title truncated to 255 characters", "[osc][truncate]") {
     auto const v = parse_sequence(seq);
     REQUIRE(v.size() == 1);
     CHECK(v[0].type == action_type::set_window_title);
-    CHECK(v[0].title.size() == 255);
-    CHECK(v[0].title == std::string(255, 'x'));
+    CHECK(std::get<std::string>(v[0].payload).size() == 255);
+    CHECK(std::get<std::string>(v[0].payload) == std::string(255, 'x'));
 }
 
 TEST_CASE("OSC — UTF-8 title bytes passed through", "[osc][unicode]") {
@@ -563,7 +564,7 @@ TEST_CASE("OSC — UTF-8 title bytes passed through", "[osc][unicode]") {
     auto const v = parse_sequence("\x1B]0;caf\xC3\xA9\x07");
     REQUIRE(v.size() == 1);
     CHECK(v[0].type == action_type::set_window_title);
-    CHECK(v[0].title == "caf\xC3\xA9");
+    CHECK(std::get<std::string>(v[0].payload) == "caf\xC3\xA9");
 }
 
 TEST_CASE("OSC — buffer limit 1024 bytes", "[osc][buffer-limit]") {
@@ -576,7 +577,7 @@ TEST_CASE("OSC — buffer limit 1024 bytes", "[osc][buffer-limit]") {
     CHECK(v[0].type == action_type::set_window_title);
     // Title text before BEL is truncated to 1024 bytes (minus "0;"), but
     // then the title extraction further truncates to 255 chars.
-    CHECK(v[0].title.size() == 255);
+    CHECK(std::get<std::string>(v[0].payload).size() == 255);
 }
 
 TEST_CASE("OSC — ESC inside OSC not followed by backslash restarts escape", "[osc][st-esc-other]") {
@@ -625,7 +626,7 @@ TEST_CASE("OSC — ESC BEL inside OSC terminates (ECMA-48 string terminator)", "
     auto const v = p.parse('\x07');  // BEL → terminates OSC
     REQUIRE(v.size() == 1);
     CHECK(v[0].type == action_type::set_window_title);
-    CHECK(v[0].title == "title");
+    CHECK(std::get<std::string>(v[0].payload) == "title");
 }
 
 TEST_CASE("OSC — parser returns to ground after OSC", "[osc][recovery]") {
@@ -634,7 +635,7 @@ TEST_CASE("OSC — parser returns to ground after OSC", "[osc][recovery]") {
     auto const v = p.parse('A');
     REQUIRE(v.size() == 1);
     CHECK(v[0].type == action_type::write_char);
-    CHECK(v[0].codepoint == 65);
+    CHECK(std::get<char32_t>(v[0].payload) == 65);
 }
 
 TEST_CASE("OSC — byte-by-byte feeding", "[osc][multi-byte]") {
@@ -647,7 +648,7 @@ TEST_CASE("OSC — byte-by-byte feeding", "[osc][multi-byte]") {
     auto const v = p.parse('\x07');
     REQUIRE(v.size() == 1);
     CHECK(v[0].type == action_type::set_window_title);
-    CHECK(v[0].title == "x");
+    CHECK(std::get<std::string>(v[0].payload) == "x");
 }
 
 // ===========================================================================
@@ -658,28 +659,28 @@ TEST_CASE("CSI IL — no param defaults to count=1", "[csi][il]") {
     auto const v = parse_sequence("\x1B[L");
     REQUIRE(v.size() == 1);
     CHECK(v[0].type == action_type::insert_lines);
-    CHECK(v[0].count == 1);
+    CHECK(std::get<uint32_t>(v[0].payload) == 1);
 }
 
 TEST_CASE("CSI IL — explicit count", "[csi][il]") {
     auto const v = parse_sequence("\x1B[5L");
     REQUIRE(v.size() == 1);
     CHECK(v[0].type == action_type::insert_lines);
-    CHECK(v[0].count == 5);
+    CHECK(std::get<uint32_t>(v[0].payload) == 5);
 }
 
 TEST_CASE("CSI IL — zero param defaulted to 1", "[csi][il]") {
     auto const v = parse_sequence("\x1B[0L");
     REQUIRE(v.size() == 1);
     CHECK(v[0].type == action_type::insert_lines);
-    CHECK(v[0].count == 1);
+    CHECK(std::get<uint32_t>(v[0].payload) == 1);
 }
 
 TEST_CASE("CSI IL — with intermediate byte after param", "[csi][il]") {
     auto const v = parse_sequence("\x1B[3 L");
     REQUIRE(v.size() == 1);
     CHECK(v[0].type == action_type::insert_lines);
-    CHECK(v[0].count == 3);
+    CHECK(std::get<uint32_t>(v[0].payload) == 3);
 }
 
 // ===========================================================================
@@ -690,21 +691,21 @@ TEST_CASE("CSI DL — no param defaults to count=1", "[csi][dl]") {
     auto const v = parse_sequence("\x1B[M");
     REQUIRE(v.size() == 1);
     CHECK(v[0].type == action_type::delete_lines);
-    CHECK(v[0].count == 1);
+    CHECK(std::get<uint32_t>(v[0].payload) == 1);
 }
 
 TEST_CASE("CSI DL — explicit count", "[csi][dl]") {
     auto const v = parse_sequence("\x1B[3M");
     REQUIRE(v.size() == 1);
     CHECK(v[0].type == action_type::delete_lines);
-    CHECK(v[0].count == 3);
+    CHECK(std::get<uint32_t>(v[0].payload) == 3);
 }
 
 TEST_CASE("CSI DL — zero param defaulted to 1", "[csi][dl]") {
     auto const v = parse_sequence("\x1B[0M");
     REQUIRE(v.size() == 1);
     CHECK(v[0].type == action_type::delete_lines);
-    CHECK(v[0].count == 1);
+    CHECK(std::get<uint32_t>(v[0].payload) == 1);
 }
 
 // ===========================================================================
@@ -715,14 +716,14 @@ TEST_CASE("CSI SU — no param defaults to count=1", "[csi][su]") {
     auto const v = parse_sequence("\x1B[S");
     REQUIRE(v.size() == 1);
     CHECK(v[0].type == action_type::scroll_up_page);
-    CHECK(v[0].count == 1);
+    CHECK(std::get<uint32_t>(v[0].payload) == 1);
 }
 
 TEST_CASE("CSI SU — explicit count", "[csi][su]") {
     auto const v = parse_sequence("\x1B[4S");
     REQUIRE(v.size() == 1);
     CHECK(v[0].type == action_type::scroll_up_page);
-    CHECK(v[0].count == 4);
+    CHECK(std::get<uint32_t>(v[0].payload) == 4);
 }
 
 // ===========================================================================
@@ -733,14 +734,14 @@ TEST_CASE("CSI SD — no param defaults to count=1", "[csi][sd]") {
     auto const v = parse_sequence("\x1B[T");
     REQUIRE(v.size() == 1);
     CHECK(v[0].type == action_type::scroll_down_page);
-    CHECK(v[0].count == 1);
+    CHECK(std::get<uint32_t>(v[0].payload) == 1);
 }
 
 TEST_CASE("CSI SD — explicit count", "[csi][sd]") {
     auto const v = parse_sequence("\x1B[2T");
     REQUIRE(v.size() == 1);
     CHECK(v[0].type == action_type::scroll_down_page);
-    CHECK(v[0].count == 2);
+    CHECK(std::get<uint32_t>(v[0].payload) == 2);
 }
 
 // ===========================================================================
@@ -751,16 +752,16 @@ TEST_CASE("CSI DECSTBM — set region", "[csi][decstbm]") {
     auto const v = parse_sequence("\x1B[3;10r");
     REQUIRE(v.size() == 1);
     CHECK(v[0].type == action_type::set_scroll_region);
-    CHECK(v[0].row == 3);
-    CHECK(v[0].col == 10);
+    CHECK(std::get<cursor_pos>(v[0].payload).row == 3);
+    CHECK(std::get<cursor_pos>(v[0].payload).col == 10);
 }
 
 TEST_CASE("CSI DECSTBM — reset with 0;0", "[csi][decstbm]") {
     auto const v = parse_sequence("\x1B[0;0r");
     REQUIRE(v.size() == 1);
     CHECK(v[0].type == action_type::set_scroll_region);
-    CHECK(v[0].row == 0);
-    CHECK(v[0].col == 0);
+    CHECK(std::get<cursor_pos>(v[0].payload).row == 0);
+    CHECK(std::get<cursor_pos>(v[0].payload).col == 0);
 }
 
 TEST_CASE("CSI DECSTBM — no params emits defaults (0, 0)", "[csi][decstbm]") {
@@ -768,32 +769,32 @@ TEST_CASE("CSI DECSTBM — no params emits defaults (0, 0)", "[csi][decstbm]") {
     REQUIRE(v.size() == 1);
     CHECK(v[0].type == action_type::set_scroll_region);
     // split_params returns [0] for empty buffer; row=0, col=0
-    CHECK(v[0].row == 0);
-    CHECK(v[0].col == 0);
+    CHECK(std::get<cursor_pos>(v[0].payload).row == 0);
+    CHECK(std::get<cursor_pos>(v[0].payload).col == 0);
 }
 
 TEST_CASE("CSI DECSTBM — top only, bottom defaults to 0", "[csi][decstbm]") {
     auto const v = parse_sequence("\x1B[5;r");
     REQUIRE(v.size() == 1);
     CHECK(v[0].type == action_type::set_scroll_region);
-    CHECK(v[0].row == 5);
-    CHECK(v[0].col == 0);
+    CHECK(std::get<cursor_pos>(v[0].payload).row == 5);
+    CHECK(std::get<cursor_pos>(v[0].payload).col == 0);
 }
 
 TEST_CASE("CSI DECSTBM — bottom only", "[csi][decstbm]") {
     auto const v = parse_sequence("\x1B[;20r");
     REQUIRE(v.size() == 1);
     CHECK(v[0].type == action_type::set_scroll_region);
-    CHECK(v[0].row == 0);
-    CHECK(v[0].col == 20);
+    CHECK(std::get<cursor_pos>(v[0].payload).row == 0);
+    CHECK(std::get<cursor_pos>(v[0].payload).col == 20);
 }
 
 TEST_CASE("CSI DECSTBM — with intermediate byte after param", "[csi][decstbm]") {
     auto const v = parse_sequence("\x1B[5;10 r");
     REQUIRE(v.size() == 1);
     CHECK(v[0].type == action_type::set_scroll_region);
-    CHECK(v[0].row == 5);
-    CHECK(v[0].col == 10);
+    CHECK(std::get<cursor_pos>(v[0].payload).row == 5);
+    CHECK(std::get<cursor_pos>(v[0].payload).col == 10);
 }
 
 // ===========================================================================
@@ -836,21 +837,21 @@ TEST_CASE("CSI ICH — explicit count", "[csi][task14][ich]") {
     auto const v = parse_sequence("\x1B[3@");
     REQUIRE(v.size() == 1);
     CHECK(v[0].type == action_type::insert_chars);
-    CHECK(v[0].count == 3);
+    CHECK(std::get<uint32_t>(v[0].payload) == 3);
 }
 
 TEST_CASE("CSI ICH — no params defaults to 1", "[csi][task14][ich]") {
     auto const v = parse_sequence("\x1B[@");
     REQUIRE(v.size() == 1);
     CHECK(v[0].type == action_type::insert_chars);
-    CHECK(v[0].count == 1);
+    CHECK(std::get<uint32_t>(v[0].payload) == 1);
 }
 
 TEST_CASE("CSI ICH — zero count defaults to 1", "[csi][task14][ich]") {
     auto const v = parse_sequence("\x1B[0@");
     REQUIRE(v.size() == 1);
     CHECK(v[0].type == action_type::insert_chars);
-    CHECK(v[0].count == 1);
+    CHECK(std::get<uint32_t>(v[0].payload) == 1);
 }
 
 // ===========================================================================
@@ -861,14 +862,14 @@ TEST_CASE("CSI DCH — explicit count", "[csi][task14][dch]") {
     auto const v = parse_sequence("\x1B[2P");
     REQUIRE(v.size() == 1);
     CHECK(v[0].type == action_type::delete_chars);
-    CHECK(v[0].count == 2);
+    CHECK(std::get<uint32_t>(v[0].payload) == 2);
 }
 
 TEST_CASE("CSI DCH — no params defaults to 1", "[csi][task14][dch]") {
     auto const v = parse_sequence("\x1B[P");
     REQUIRE(v.size() == 1);
     CHECK(v[0].type == action_type::delete_chars);
-    CHECK(v[0].count == 1);
+    CHECK(std::get<uint32_t>(v[0].payload) == 1);
 }
 
 // ===========================================================================
@@ -879,14 +880,14 @@ TEST_CASE("CSI ECH — explicit count", "[csi][task14][ech]") {
     auto const v = parse_sequence("\x1B[5X");
     REQUIRE(v.size() == 1);
     CHECK(v[0].type == action_type::erase_chars);
-    CHECK(v[0].count == 5);
+    CHECK(std::get<uint32_t>(v[0].payload) == 5);
 }
 
 TEST_CASE("CSI ECH — no params defaults to 1", "[csi][task14][ech]") {
     auto const v = parse_sequence("\x1B[X");
     REQUIRE(v.size() == 1);
     CHECK(v[0].type == action_type::erase_chars);
-    CHECK(v[0].count == 1);
+    CHECK(std::get<uint32_t>(v[0].payload) == 1);
 }
 
 // ===========================================================================
@@ -938,21 +939,21 @@ TEST_CASE("UTF-8 — 2-byte sequence (U+00E9 é)", "[task15][utf8]") {
     auto const v = parse_sequence("\xC3\xA9");
     REQUIRE(v.size() == 1);
     CHECK(v[0].type == action_type::write_char);
-    CHECK(v[0].codepoint == 0x00E9);
+    CHECK(std::get<char32_t>(v[0].payload) == 0x00E9);
 }
 
 TEST_CASE("UTF-8 — 3-byte sequence (U+4E2D 中)", "[task15][utf8]") {
     auto const v = parse_sequence("\xE4\xB8\xAD");
     REQUIRE(v.size() == 1);
     CHECK(v[0].type == action_type::write_char);
-    CHECK(v[0].codepoint == 0x4E2D);
+    CHECK(std::get<char32_t>(v[0].payload) == 0x4E2D);
 }
 
 TEST_CASE("UTF-8 — 4-byte sequence (U+1F600 😀)", "[task15][utf8]") {
     auto const v = parse_sequence("\xF0\x9F\x98\x80");
     REQUIRE(v.size() == 1);
     CHECK(v[0].type == action_type::write_char);
-    CHECK(v[0].codepoint == 0x1F600);
+    CHECK(std::get<char32_t>(v[0].payload) == 0x1F600);
 }
 
 TEST_CASE("UTF-8 — mixed ASCII and multi-byte", "[task15][utf8]") {
@@ -960,11 +961,11 @@ TEST_CASE("UTF-8 — mixed ASCII and multi-byte", "[task15][utf8]") {
     auto const v = parse_sequence_all("A\xE4\xB8\xAD" "B");
     REQUIRE(v.size() == 3);
     CHECK(v[0].type == action_type::write_char);
-    CHECK(v[0].codepoint == U'A');
+    CHECK(std::get<char32_t>(v[0].payload) == U'A');
     CHECK(v[1].type == action_type::write_char);
-    CHECK(v[1].codepoint == 0x4E2D);
+    CHECK(std::get<char32_t>(v[1].payload) == 0x4E2D);
     CHECK(v[2].type == action_type::write_char);
-    CHECK(v[2].codepoint == U'B');
+    CHECK(std::get<char32_t>(v[2].payload) == U'B');
 }
 
 TEST_CASE("UTF-8 — invalid byte (0xFF) emits replacement char", "[task15][utf8]") {
@@ -980,15 +981,15 @@ TEST_CASE("UTF-8 — overlong encoding is rejected", "[task15][utf8]") {
     auto const v = parse_sequence("\xC0\x80");
     REQUIRE(v.size() == 1);
     CHECK(v[0].type == action_type::write_char);
-    CHECK(v[0].codepoint == 0xFFFD);
+    CHECK(std::get<char32_t>(v[0].payload) == 0xFFFD);
 }
 
 TEST_CASE("UTF-8 — stray continuation byte is ignored", "[task15][utf8]") {
     // 0x80 is a continuation byte without a start byte → ignored.
     auto const v = parse_sequence_all("A\x80" "B");
     REQUIRE(v.size() == 2);
-    CHECK(v[0].codepoint == U'A');
-    CHECK(v[1].codepoint == U'B');
+    CHECK(std::get<char32_t>(v[0].payload) == U'A');
+    CHECK(std::get<char32_t>(v[1].payload) == U'B');
 }
 
 TEST_CASE("UTF-8 — truncated sequence aborted by ESC", "[task15][utf8]") {
@@ -1007,7 +1008,7 @@ TEST_CASE("UTF-8 — surrogate codepoint is rejected", "[task15][utf8]") {
     auto const v = parse_sequence("\xED\xA0\x80");
     REQUIRE(v.size() == 1);
     CHECK(v[0].type == action_type::write_char);
-    CHECK(v[0].codepoint == 0xFFFD);
+    CHECK(std::get<char32_t>(v[0].payload) == 0xFFFD);
 }
 
 TEST_CASE("UTF-8 — codepoint above U+10FFFF is rejected", "[task15][utf8]") {
@@ -1015,5 +1016,5 @@ TEST_CASE("UTF-8 — codepoint above U+10FFFF is rejected", "[task15][utf8]") {
     auto const v = parse_sequence("\xF4\x90\x80\x80");
     REQUIRE(v.size() == 1);
     CHECK(v[0].type == action_type::write_char);
-    CHECK(v[0].codepoint == 0xFFFD);
+    CHECK(std::get<char32_t>(v[0].payload) == 0xFFFD);
 }

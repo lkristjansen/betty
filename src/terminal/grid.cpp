@@ -181,7 +181,7 @@ void terminal_grid::apply(action const& a) {
 
   switch (a.type) {
   case action_type::write_char:
-    write_char(a.codepoint);
+    write_char(std::get<char32_t>(a.payload));
     break;
   case action_type::carriage_return:
     carriage_return();
@@ -191,23 +191,25 @@ void terminal_grid::apply(action const& a) {
     break;
   case action_type::move_cursor:
     pending_wrap_ = false;
-    cursor_.move_to(a.row, a.col, max_row, max_col);
+    cursor_.move_to(std::get<cursor_pos>(a.payload).row,
+                    std::get<cursor_pos>(a.payload).col,
+                    max_row, max_col);
     break;
   case action_type::move_cursor_up:
     pending_wrap_ = false;
-    cursor_.move_up(a.count, max_row);
+    cursor_.move_up(std::get<uint32_t>(a.payload), max_row);
     break;
   case action_type::move_cursor_down:
     pending_wrap_ = false;
-    cursor_.move_down(a.count, max_row);
+    cursor_.move_down(std::get<uint32_t>(a.payload), max_row);
     break;
   case action_type::move_cursor_forward:
     pending_wrap_ = false;
-    cursor_.move_forward(a.count, max_col);
+    cursor_.move_forward(std::get<uint32_t>(a.payload), max_col);
     break;
   case action_type::move_cursor_back:
     pending_wrap_ = false;
-    cursor_.move_back(a.count);
+    cursor_.move_back(std::get<uint32_t>(a.payload));
     break;
   case action_type::save_cursor:
     cursor_.save();
@@ -220,50 +222,51 @@ void terminal_grid::apply(action const& a) {
     sgr_ = sgr_state{};
     break;
   case action_type::sgr_set_fg:
-    sgr_.fg = a.color;
+    sgr_.fg = std::get<terminal_color>(a.payload);
     break;
   case action_type::sgr_set_bg:
-    sgr_.bg = a.color;
+    sgr_.bg = std::get<terminal_color>(a.payload);
     break;
   case action_type::sgr_set_attr:
-    sgr_.attr = sgr_.attr | static_cast<cell_attr>(a.count);
+    sgr_.attr = sgr_.attr | static_cast<cell_attr>(std::get<uint32_t>(a.payload));
     break;
   case action_type::sgr_clear_attr:
-    sgr_.attr = sgr_.attr & ~static_cast<cell_attr>(a.count);
+    sgr_.attr = sgr_.attr & ~static_cast<cell_attr>(std::get<uint32_t>(a.payload));
     break;
   case action_type::erase_display:
-    erase_display(a.count);
+    erase_display(std::get<uint32_t>(a.payload));
     break;
   case action_type::erase_line:
-    erase_line(a.count);
+    erase_line(std::get<uint32_t>(a.payload));
     break;
   case action_type::set_scroll_region:
-    set_scroll_region(a.row, a.col);
+    set_scroll_region(std::get<cursor_pos>(a.payload).row,
+                      std::get<cursor_pos>(a.payload).col);
     break;
   case action_type::insert_lines:
-    insert_lines(a.count);
+    insert_lines(std::get<uint32_t>(a.payload));
     break;
   case action_type::delete_lines:
-    delete_lines(a.count);
+    delete_lines(std::get<uint32_t>(a.payload));
     break;
   case action_type::insert_chars:
-    insert_chars(a.count);
+    insert_chars(std::get<uint32_t>(a.payload));
     break;
   case action_type::delete_chars:
-    delete_chars(a.count);
+    delete_chars(std::get<uint32_t>(a.payload));
     break;
   case action_type::erase_chars:
-    erase_chars(a.count);
+    erase_chars(std::get<uint32_t>(a.payload));
     break;
   case action_type::scroll_up_page:
-    scroll_page_up(a.count);
+    scroll_page_up(std::get<uint32_t>(a.payload));
     break;
   case action_type::scroll_down_page:
-    scroll_page_down(a.count);
+    scroll_page_down(std::get<uint32_t>(a.payload));
     break;
   case action_type::set_window_title:
     if (on_window_title_) {
-      on_window_title_(a.title);
+      on_window_title_(std::get<std::string>(a.payload));
     }
     break;
   }

@@ -109,6 +109,7 @@ auto terminal_session::process_output() -> session_status {
     if (!exit_notified_) {
       grid_.write_bytes("[shell exited]\r\n");
       exit_notified_ = true;
+      if (on_exited_) on_exited_();
       return session_status::dead;
     }
     // Drain remaining output.
@@ -169,6 +170,10 @@ auto terminal_session::is_following_output() const -> bool { return grid_.is_fol
 
 void terminal_session::set_observer(std::function<void(std::string_view)> on_title) {
   grid_.set_observer(std::move(on_title));
+}
+
+void terminal_session::on_exited(std::function<void()> callback) {
+  on_exited_ = std::move(callback);
 }
 
 } // namespace betty::terminal

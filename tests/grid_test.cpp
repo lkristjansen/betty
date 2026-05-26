@@ -324,8 +324,7 @@ TEST_CASE("Grid — apply move_cursor", "[grid][apply]") {
     terminal_grid g(10, 10);
     action a;
     a.type = action_type::move_cursor;
-    a.row = 5;
-    a.col = 7;
+    a.payload = cursor_pos{5, 7};
     g.apply(a);
     CHECK(g.cursor_row() == 5);
     CHECK(g.cursor_col() == 7);
@@ -335,8 +334,7 @@ TEST_CASE("Grid — apply move_cursor clamps to bounds", "[grid][apply][edge]") 
     terminal_grid g(5, 3);
     action a;
     a.type = action_type::move_cursor;
-    a.row = 99;
-    a.col = 99;
+    a.payload = cursor_pos{99, 99};
     g.apply(a);
     CHECK(g.cursor_row() == 2);
     CHECK(g.cursor_col() == 4);
@@ -346,13 +344,12 @@ TEST_CASE("Grid — apply move_cursor_up", "[grid][apply]") {
     terminal_grid g(10, 10);
     action a;
     a.type = action_type::move_cursor;
-    a.row = 5;
-    a.col = 5;
+    a.payload = cursor_pos{5, 5};
     g.apply(a);  // cursor at (5,5)
 
     action b;
     b.type = action_type::move_cursor_up;
-    b.count = 2;
+    b.payload = uint32_t{2};
     g.apply(b);
     CHECK(g.cursor_row() == 3);
     CHECK(g.cursor_col() == 5);
@@ -362,13 +359,12 @@ TEST_CASE("Grid — apply move_cursor_up clamps to 0", "[grid][apply][edge]") {
     terminal_grid g(10, 10);
     action a;
     a.type = action_type::move_cursor;
-    a.row = 1;
-    a.col = 0;
+    a.payload = cursor_pos{1, 0};
     g.apply(a);
 
     action b;
     b.type = action_type::move_cursor_up;
-    b.count = 5;
+    b.payload = uint32_t{5};
     g.apply(b);
     CHECK(g.cursor_row() == 0);
 }
@@ -377,7 +373,7 @@ TEST_CASE("Grid — apply move_cursor_down", "[grid][apply]") {
     terminal_grid g(10, 10);
     action b;
     b.type = action_type::move_cursor_down;
-    b.count = 3;
+    b.payload = uint32_t{3};
     g.apply(b);
     CHECK(g.cursor_row() == 3);
 }
@@ -386,7 +382,7 @@ TEST_CASE("Grid — apply move_cursor_down clamps to last row", "[grid][apply][e
     terminal_grid g(10, 3);
     action b;
     b.type = action_type::move_cursor_down;
-    b.count = 99;
+    b.payload = uint32_t{99};
     g.apply(b);
     CHECK(g.cursor_row() == 2);
 }
@@ -395,7 +391,7 @@ TEST_CASE("Grid — apply move_cursor_forward", "[grid][apply]") {
     terminal_grid g(10, 5);
     action b;
     b.type = action_type::move_cursor_forward;
-    b.count = 4;
+    b.payload = uint32_t{4};
     g.apply(b);
     CHECK(g.cursor_col() == 4);
 }
@@ -404,7 +400,7 @@ TEST_CASE("Grid — apply move_cursor_forward clamps to last col", "[grid][apply
     terminal_grid g(5, 3);
     action b;
     b.type = action_type::move_cursor_forward;
-    b.count = 99;
+    b.payload = uint32_t{99};
     g.apply(b);
     CHECK(g.cursor_col() == 4);
 }
@@ -413,13 +409,12 @@ TEST_CASE("Grid — apply move_cursor_back", "[grid][apply]") {
     terminal_grid g(10, 5);
     action a;
     a.type = action_type::move_cursor;
-    a.row = 0;
-    a.col = 5;
+    a.payload = cursor_pos{0, 5};
     g.apply(a);
 
     action b;
     b.type = action_type::move_cursor_back;
-    b.count = 3;
+    b.payload = uint32_t{3};
     g.apply(b);
     CHECK(g.cursor_col() == 2);
 }
@@ -428,7 +423,7 @@ TEST_CASE("Grid — apply move_cursor_back clamps to 0", "[grid][apply][edge]") 
     terminal_grid g(10, 5);
     action b;
     b.type = action_type::move_cursor_back;
-    b.count = 99;
+    b.payload = uint32_t{99};
     g.apply(b);
     CHECK(g.cursor_col() == 0);
 }
@@ -441,7 +436,7 @@ TEST_CASE("Grid — save_cursor remembers current cursor position", "[grid][curs
     terminal_grid g(10, 10);
     action mv;
     mv.type = action_type::move_cursor;
-    mv.row = 5; mv.col = 7;
+    mv.payload = cursor_pos{5, 7};
     g.apply(mv);
 
     action save;
@@ -458,7 +453,7 @@ TEST_CASE("Grid — save_cursor and restore_cursor round-trip", "[grid][cursor_s
     // Move to (5, 7).
     action mv;
     mv.type = action_type::move_cursor;
-    mv.row = 5; mv.col = 7;
+    mv.payload = cursor_pos{5, 7};
     g.apply(mv);
 
     // Save.
@@ -469,7 +464,7 @@ TEST_CASE("Grid — save_cursor and restore_cursor round-trip", "[grid][cursor_s
     // Move elsewhere.
     action mv2;
     mv2.type = action_type::move_cursor;
-    mv2.row = 2; mv2.col = 2;
+    mv2.payload = cursor_pos{2, 2};
     g.apply(mv2);
 
     // Restore.
@@ -518,7 +513,7 @@ TEST_CASE("Grid — saved cursor is reset after resize", "[grid][cursor_save_res
     // Move to (5, 5) and save.
     action mv;
     mv.type = action_type::move_cursor;
-    mv.row = 5; mv.col = 5;
+    mv.payload = cursor_pos{5, 5};
     g.apply(mv);
 
     action save;
@@ -590,8 +585,7 @@ TEST_CASE("Grid — resize clamps cursor to new bounds", "[grid][resize]") {
     terminal_grid g(10, 10);
     action a;
     a.type = action_type::move_cursor;
-    a.row = 7;
-    a.col = 7;
+    a.payload = cursor_pos{7, 7};
     g.apply(a);
     g.resize(5, 5);
     CHECK(g.cursor_row() == 4);
@@ -791,13 +785,13 @@ TEST_CASE("Grid — erase_display mode 0 clears from cursor to end", "[grid][era
     // Move to (1,2).
     action mv;
     mv.type = action_type::move_cursor;
-    mv.row = 1; mv.col = 2;
+    mv.payload = cursor_pos{1, 2};
     g.apply(mv);
 
     // Erase from cursor to end.
     action ed;
     ed.type = action_type::erase_display;
-    ed.count = 0;
+    ed.payload = uint32_t{0};
     g.apply(ed);
 
     // All cells BEFORE cursor should still be 'X'.
@@ -826,12 +820,12 @@ TEST_CASE("Grid — erase_display mode 1 clears from beginning to cursor", "[gri
     // Move cursor to (1, 2).
     action mv;
     mv.type = action_type::move_cursor;
-    mv.row = 1; mv.col = 2;
+    mv.payload = cursor_pos{1, 2};
     g.apply(mv);
 
     action ed;
     ed.type = action_type::erase_display;
-    ed.count = 1;
+    ed.payload = uint32_t{1};
     g.apply(ed);
 
     // Cells up to and including cursor should be space.
@@ -855,7 +849,7 @@ TEST_CASE("Grid — erase_display mode 2 clears entire screen", "[grid][erase]")
 
     action ed;
     ed.type = action_type::erase_display;
-    ed.count = 2;
+    ed.payload = uint32_t{2};
     g.apply(ed);
 
     // Every cell should now be space.
@@ -868,12 +862,12 @@ TEST_CASE("Grid — erase_display does not move cursor", "[grid][erase]") {
     terminal_grid g(5, 3);
     action mv;
     mv.type = action_type::move_cursor;
-    mv.row = 2; mv.col = 3;
+    mv.payload = cursor_pos{2, 3};
     g.apply(mv);
 
     action ed;
     ed.type = action_type::erase_display;
-    ed.count = 2;
+    ed.payload = uint32_t{2};
     g.apply(ed);
 
     CHECK(g.cursor_row() == 2);
@@ -890,19 +884,19 @@ TEST_CASE("Grid — erase_line mode 0 clears from cursor to end of line", "[grid
     for (uint32_t c = 0; c < 5; ++c) {
         action mv;
         mv.type = action_type::move_cursor;
-        mv.row = 1; mv.col = c;
+        mv.payload = cursor_pos{1, c};
         g.apply(mv);
         g.write_char(U'X');
     }
     // Cursor at (1, 2).
     action mv;
     mv.type = action_type::move_cursor;
-    mv.row = 1; mv.col = 2;
+    mv.payload = cursor_pos{1, 2};
     g.apply(mv);
 
     action el;
     el.type = action_type::erase_line;
-    el.count = 0;
+    el.payload = uint32_t{0};
     g.apply(el);
 
     // Columns 0-1 unchanged.
@@ -923,18 +917,18 @@ TEST_CASE("Grid — erase_line mode 1 clears from beginning to cursor", "[grid][
     for (uint32_t c = 0; c < 5; ++c) {
         action mv;
         mv.type = action_type::move_cursor;
-        mv.row = 1; mv.col = c;
+        mv.payload = cursor_pos{1, c};
         g.apply(mv);
         g.write_char(U'X');
     }
     action mv;
     mv.type = action_type::move_cursor;
-    mv.row = 1; mv.col = 2;
+    mv.payload = cursor_pos{1, 2};
     g.apply(mv);
 
     action el;
     el.type = action_type::erase_line;
-    el.count = 1;
+    el.payload = uint32_t{1};
     g.apply(el);
 
     CHECK(g.cell(1, 0).codepoint == U' ');
@@ -953,12 +947,12 @@ TEST_CASE("Grid — erase_line mode 2 clears entire line", "[grid][erase]") {
     // Cursor is now at (1,5) → auto-wrapped to (2,0). Move back to row 1.
     action mv;
     mv.type = action_type::move_cursor;
-    mv.row = 1; mv.col = 2;
+    mv.payload = cursor_pos{1, 2};
     g.apply(mv);
 
     action el;
     el.type = action_type::erase_line;
-    el.count = 2;
+    el.payload = uint32_t{2};
     g.apply(el);
 
     for (uint32_t c = 0; c < 5; ++c)
@@ -973,12 +967,12 @@ TEST_CASE("Grid — erase_line does not move cursor", "[grid][erase]") {
     terminal_grid g(5, 3);
     action mv;
     mv.type = action_type::move_cursor;
-    mv.row = 1; mv.col = 3;
+    mv.payload = cursor_pos{1, 3};
     g.apply(mv);
 
     action el;
     el.type = action_type::erase_line;
-    el.count = 2;
+    el.payload = uint32_t{2};
     g.apply(el);
 
     CHECK(g.cursor_row() == 1);
@@ -993,7 +987,7 @@ TEST_CASE("Grid — erase_display on zero-size grid does not crash", "[grid][era
     terminal_grid g(0, 0);
     action ed;
     ed.type = action_type::erase_display;
-    ed.count = 2;
+    ed.payload = uint32_t{2};
     g.apply(ed);
     SUCCEED("erase_display on zero-size grid did not crash");
 }
@@ -1002,7 +996,7 @@ TEST_CASE("Grid — erase_line on zero-size grid does not crash", "[grid][erase]
     terminal_grid g(0, 0);
     action el;
     el.type = action_type::erase_line;
-    el.count = 2;
+    el.payload = uint32_t{2};
     g.apply(el);
     SUCCEED("erase_line on zero-size grid did not crash");
 }
@@ -1015,7 +1009,7 @@ TEST_CASE("Grid — erase_display mode 3 treated as mode 2", "[grid][erase]") {
 
     action ed;
     ed.type = action_type::erase_display;
-    ed.count = 3;
+    ed.payload = uint32_t{3};
     g.apply(ed);
 
     for (uint32_t r = 0; r < 2; ++r)
@@ -1032,12 +1026,12 @@ TEST_CASE("Grid — erase uses default colours", "[grid][erase]") {
     // Move back to (0,0) and erase the line.
     action mv;
     mv.type = action_type::move_cursor;
-    mv.row = 0; mv.col = 0;
+    mv.payload = cursor_pos{0, 0};
     g.apply(mv);
 
     action el;
     el.type = action_type::erase_line;
-    el.count = 2;
+    el.payload = uint32_t{2};
     g.apply(el);
 
     // Erased cell should have default fg, default bg.
@@ -1075,7 +1069,7 @@ TEST_CASE("Grid — default scroll region is full screen", "[grid][scroll_region
     // Cursor ends after "row4" at (4, 4). Move to col 0 of bottom row.
     action mv;
     mv.type = action_type::move_cursor;
-    mv.row = 4; mv.col = 0;
+    mv.payload = cursor_pos{4, 0};
     g.apply(mv);
     CHECK(g.cursor_row() == 4);
 
@@ -1105,7 +1099,7 @@ TEST_CASE("Grid — set_scroll_region top > bottom is ignored", "[grid][scroll_r
     // newline at bottom should scroll full screen (default region unchanged).
     action mv;
     mv.type = action_type::move_cursor;
-    mv.row = 9; mv.col = 0;
+    mv.payload = cursor_pos{9, 0};
     g.apply(mv);
     g.newline();  // full-screen scroll
     // Row 0 should be 'Y', row 9 blank.
@@ -1119,7 +1113,7 @@ TEST_CASE("Grid — set_scroll_region with top > rows is ignored", "[grid][scrol
     // Move cursor away from home so we can verify the call is a no-op.
     action mv;
     mv.type = action_type::move_cursor;
-    mv.row = 3; mv.col = 7;
+    mv.payload = cursor_pos{3, 7};
     g.apply(mv);
     CHECK(g.cursor_row() == 3);
     CHECK(g.cursor_col() == 7);
@@ -1140,7 +1134,7 @@ TEST_CASE("Grid — set_scroll_region bottom > rows clamped", "[grid][scroll_reg
     // Move cursor to bottom.
     action mv;
     mv.type = action_type::move_cursor;
-    mv.row = 4; mv.col = 0;
+    mv.payload = cursor_pos{4, 0};
     g.apply(mv);
     g.newline();  // should scroll full screen (region = 1-5)
     CHECK(g.cursor_row() == 4);
@@ -1158,7 +1152,7 @@ TEST_CASE("Grid — set_scroll_region 0;0 resets to full screen", "[grid][scroll
     // Now newline at bottom should scroll full screen.
     action mv;
     mv.type = action_type::move_cursor;
-    mv.row = 9; mv.col = 0;
+    mv.payload = cursor_pos{9, 0};
     g.apply(mv);
     g.write_char(U'X');
     g.newline();  // scroll full screen
@@ -1186,7 +1180,7 @@ TEST_CASE("Grid — newline at bottom margin scrolls region, header stays", "[gr
     // Move to bottom margin.
     action mv;
     mv.type = action_type::move_cursor;
-    mv.row = 4; mv.col = 0;
+    mv.payload = cursor_pos{4, 0};
     g.apply(mv);
 
     // newline at bottom margin should scroll the region, NOT the header.
@@ -1232,7 +1226,7 @@ TEST_CASE("Grid — write_char auto-wrap respects scroll region", "[grid][scroll
     // Move to row 1, start writing.
     action mv;
     mv.type = action_type::move_cursor;
-    mv.row = 1; mv.col = 0;
+    mv.payload = cursor_pos{1, 0};
     g.apply(mv);
 
     // Write data in the scroll region. "abc" fills row 1, wraps to row 2.
@@ -1262,7 +1256,7 @@ TEST_CASE("Grid — IL inserts blank line at cursor within region", "[grid][il]"
     // Move cursor to row 2 (0-based: 1).
     action mv;
     mv.type = action_type::move_cursor;
-    mv.row = 1; mv.col = 2;
+    mv.payload = cursor_pos{1, 2};
     g.apply(mv);
 
     // Insert 2 lines.
@@ -1295,7 +1289,7 @@ TEST_CASE("Grid — IL count clamped to region boundary", "[grid][il]") {
     // Cursor is now at (0,0). Move to row 2.
     action mv;
     mv.type = action_type::move_cursor;
-    mv.row = 2; mv.col = 0;  // 0-based row 2 (third visible row)
+    mv.payload = cursor_pos{2, 0};  // 0-based row 2 (third visible row)
     g.apply(mv);
 
     // Only 2 rows remain in the region below cursor (rows 2 and 3).
@@ -1335,7 +1329,7 @@ TEST_CASE("Grid — IL ignored when cursor outside scroll region (below)", "[gri
     // Move cursor below region.
     action mv;
     mv.type = action_type::move_cursor;
-    mv.row = 3; mv.col = 0;
+    mv.payload = cursor_pos{3, 0};
     g.apply(mv);
 
     g.insert_lines(1);  // should be ignored (row 3 > scroll_bottom_ 1)
@@ -1348,7 +1342,7 @@ TEST_CASE("Grid — IL cursor col resets to 0", "[grid][il]") {
     terminal_grid g(10, 5);
     action mv;
     mv.type = action_type::move_cursor;
-    mv.row = 2; mv.col = 5;
+    mv.payload = cursor_pos{2, 5};
     g.apply(mv);
 
     g.insert_lines(1);
@@ -1371,7 +1365,7 @@ TEST_CASE("Grid — DL deletes line at cursor within region", "[grid][dl]") {
     // Move cursor to row 1 (0-based).
     action mv;
     mv.type = action_type::move_cursor;
-    mv.row = 1; mv.col = 2;
+    mv.payload = cursor_pos{1, 2};
     g.apply(mv);
 
     // Delete 2 lines starting at row 1 (rows 1 and 2 deleted).
@@ -1402,7 +1396,7 @@ TEST_CASE("Grid — DL ignored when cursor outside scroll region", "[grid][dl][e
     // Move cursor below region.
     action mv;
     mv.type = action_type::move_cursor;
-    mv.row = 3; mv.col = 0;
+    mv.payload = cursor_pos{3, 0};
     g.apply(mv);
 
     g.delete_lines(1);  // should be ignored
@@ -1415,7 +1409,7 @@ TEST_CASE("Grid — DL cursor col resets to 0", "[grid][dl]") {
     terminal_grid g(10, 5);
     action mv;
     mv.type = action_type::move_cursor;
-    mv.row = 2; mv.col = 5;
+    mv.payload = cursor_pos{2, 5};
     g.apply(mv);
 
     g.delete_lines(1);
@@ -1546,7 +1540,7 @@ TEST_CASE("Grid — scroll region preserved across resize", "[grid][scroll_regio
     // So newline at bottom should scroll full screen.
     action mv;
     mv.type = action_type::move_cursor;
-    mv.row = 4; mv.col = 0;
+    mv.payload = cursor_pos{4, 0};
     g.apply(mv);
     g.write_char(U'X');
     g.newline();
@@ -1587,7 +1581,7 @@ TEST_CASE("Grid — ICH inserts blanks and shifts cells right", "[grid][task14][
     // Move cursor to col 1.
     action mv;
     mv.type = action_type::move_cursor;
-    mv.row = 0; mv.col = 1;
+    mv.payload = cursor_pos{0, 1};
     g.apply(mv);
 
     // Insert 2 blank cells.
@@ -1610,7 +1604,7 @@ TEST_CASE("Grid — ICH count clamped to remaining columns", "[grid][task14][ich
 
     action mv;
     mv.type = action_type::move_cursor;
-    mv.row = 0; mv.col = 3;
+    mv.payload = cursor_pos{0, 3};
     g.apply(mv);
 
     // Only 2 columns remain. Request 10.
@@ -1632,7 +1626,7 @@ TEST_CASE("Grid — ICH at last column blanks that cell", "[grid][task14][ich]")
 
     action mv;
     mv.type = action_type::move_cursor;
-    mv.row = 0; mv.col = 4;
+    mv.payload = cursor_pos{0, 4};
     g.apply(mv);
 
     g.insert_chars(1);
@@ -1658,7 +1652,7 @@ TEST_CASE("Grid — ICH cursor unchanged", "[grid][task14][ich]") {
     terminal_grid g(10, 5);
     action mv;
     mv.type = action_type::move_cursor;
-    mv.row = 2; mv.col = 3;
+    mv.payload = cursor_pos{2, 3};
     g.apply(mv);
 
     g.insert_chars(2);
@@ -1679,7 +1673,7 @@ TEST_CASE("Grid — DCH deletes cells and shifts left", "[grid][task14][dch]") {
     // Move cursor to col 1.
     action mv;
     mv.type = action_type::move_cursor;
-    mv.row = 0; mv.col = 1;
+    mv.payload = cursor_pos{0, 1};
     g.apply(mv);
 
     // Delete 2 cells.
@@ -1702,7 +1696,7 @@ TEST_CASE("Grid — DCH count clamped to remaining columns", "[grid][task14][dch
 
     action mv;
     mv.type = action_type::move_cursor;
-    mv.row = 0; mv.col = 3;
+    mv.payload = cursor_pos{0, 3};
     g.apply(mv);
 
     // Only 2 columns remain. Request 10.
@@ -1724,7 +1718,7 @@ TEST_CASE("Grid — DCH at last column blanks that cell", "[grid][task14][dch]")
 
     action mv;
     mv.type = action_type::move_cursor;
-    mv.row = 0; mv.col = 4;
+    mv.payload = cursor_pos{0, 4};
     g.apply(mv);
 
     g.delete_chars(1);
@@ -1742,7 +1736,7 @@ TEST_CASE("Grid — DCH cursor unchanged", "[grid][task14][dch]") {
     terminal_grid g(10, 5);
     action mv;
     mv.type = action_type::move_cursor;
-    mv.row = 2; mv.col = 3;
+    mv.payload = cursor_pos{2, 3};
     g.apply(mv);
 
     g.delete_chars(2);
@@ -1761,7 +1755,7 @@ TEST_CASE("Grid — ECH blanks cells in place", "[grid][task14][ech]") {
 
     action mv;
     mv.type = action_type::move_cursor;
-    mv.row = 0; mv.col = 1;
+    mv.payload = cursor_pos{0, 1};
     g.apply(mv);
 
     // Erase 3 cells.
@@ -1784,7 +1778,7 @@ TEST_CASE("Grid — ECH count clamped to remaining columns", "[grid][task14][ech
 
     action mv;
     mv.type = action_type::move_cursor;
-    mv.row = 0; mv.col = 3;
+    mv.payload = cursor_pos{0, 3};
     g.apply(mv);
 
     // Only 2 columns remain. Request 10.
@@ -1804,7 +1798,7 @@ TEST_CASE("Grid — ECH cursor unchanged", "[grid][task14][ech]") {
     terminal_grid g(10, 5);
     action mv;
     mv.type = action_type::move_cursor;
-    mv.row = 2; mv.col = 3;
+    mv.payload = cursor_pos{2, 3};
     g.apply(mv);
 
     g.erase_chars(3);

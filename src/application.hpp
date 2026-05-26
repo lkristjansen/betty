@@ -32,7 +32,6 @@ private:
   platform::win32_window window_;
   platform::renderer_context renderer_ctx_;
   terminal::terminal_session session_;
-  bool session_dead_ = false;
   std::optional<std::error_code> fatal_error_;
 
   friend auto make_application() -> std::expected<application, std::error_code>;

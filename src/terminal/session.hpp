@@ -70,9 +70,14 @@ public:
   [[nodiscard]] auto rows() const -> uint32_t;
   [[nodiscard]] auto is_following_output() const -> bool;
 
-  // --- Observer (window title changes) --------------------------------------
+  // --- Observers ------------------------------------------------------------
 
+  // Register a callback invoked when the shell emits an OSC window-title
+  // sequence (OSC 0 / 1 / 2).
   void set_observer(std::function<void(std::string_view)> on_title);
+
+  // Register a callback invoked exactly once when the shell process exits.
+  void on_exited(std::function<void()> callback);
 
 private:
   terminal_grid grid_;
@@ -80,6 +85,7 @@ private:
   input_handler input_;
   bool shell_input_failed_ = false;
   bool exit_notified_ = false;
+  std::function<void()> on_exited_;
 };
 
 } // namespace betty::terminal

@@ -97,6 +97,11 @@ int application::run() {
     platform::set_window_title(window_, title);
   });
 
+  // Restore default window title when the shell exits.
+  session_.on_exited([this] {
+    platform::set_window_title(window_, "betty");
+  });
+
   // Message loop.
   int exit_code = 0;
   while (platform::dispatch_pending_messages()) {
@@ -110,12 +115,7 @@ int application::run() {
     renderer_ctx_.begin_frame(platform::mocha_base);
 
     // Read shell output.
-    auto const status = session_.process_output();
-    if (status == terminal::session_status::dead && !session_dead_) {
-      session_dead_ = true;
-      // Restore default window title on shell exit.
-      platform::set_window_title(window_, "betty");
-    }
+    (void)session_.process_output();
 
     // Render the grid.
     auto const cells = session_.render_cells();

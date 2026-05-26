@@ -28,7 +28,7 @@ void renderer_context::begin_frame(rgba_color const& clear_color) const {
 }
 
 auto renderer_context::draw_grid(std::span<render_cell const> cells,
-                                  size2d dims, std::optional<point2d> cursor, uint32_t padding) const
+                                  size2d dims, std::optional<point2d> cursor, uint32_t padding)
     -> std::expected<void, std::error_code> {
   if (cells.empty()) return {};
 

@@ -207,12 +207,12 @@ struct glyph_renderer::impl {
   std::array<glyph_slot, k_dyn_max_glyphs> dyn_glyph_slots{};
 
   // Hash map: codepoint → slot index.
-  mutable std::unordered_map<char32_t, uint32_t> dyn_index_;
+  std::unordered_map<char32_t, uint32_t> dyn_index_;
   // LRU: last-access generation counter per slot.
-  mutable std::array<uint64_t, k_dyn_max_glyphs> dyn_access_{};
-  mutable uint64_t dyn_clock_ = 0;
+  std::array<uint64_t, k_dyn_max_glyphs> dyn_access_{};
+  uint64_t dyn_clock_ = 0;
   // Next free slot (fills sequentially until full, then LRU eviction).
-  mutable uint32_t dyn_next_ = 0;
+  uint32_t dyn_next_ = 0;
 
   // D3D pipeline state
   ComPtr<ID3D11VertexShader>  vertex_shader;
@@ -881,186 +881,6 @@ inline void write_glyph_quad(glyph_vertex* vertices, uint32_t quad_idx,
 } // anonymous namespace
 
 // ===========================================================================
-// glyph_renderer::draw
-// ===========================================================================
-
-auto glyph_renderer::draw(d3d_device const& device,
-                           d3d_render_target_view const& rtv,
-                           std::span<const char> text) const
-  -> std::expected<void, std::error_code> {
-
-  auto* context = device.impl_->context.Get();
-
-  // --- 1. Map vertex buffer ------------------------------------------------
-  D3D11_MAPPED_SUBRESOURCE mapped{};
-  HRESULT hr = context->Map(impl_->vertex_buffer.Get(), 0,
-                              D3D11_MAP_WRITE_DISCARD, 0, &mapped);
-  if (FAILED(hr)) {
-    return std::unexpected(make_hresult_error(hr));
-  }
-
-  auto* vertices = static_cast<glyph_vertex*>(mapped.pData);
-  uint32_t col = 0;
-  uint32_t quad_count = 0;
-
-  for (size_t i = 0; i < text.size() && quad_count < k_max_glyphs_per_frame; ++i) {
-    unsigned char cp = static_cast<unsigned char>(text[i]);
-    if (cp > 127) continue;  // ASCII only — caller should ensure valid input
-
-    auto& slot = impl_->glyph_slots[cp];
-    float x0 = static_cast<float>(col * impl_->cell_width);
-    float y0 = 0.0f;  // row 0 for now
-    float x1 = x0 + static_cast<float>(impl_->cell_width);
-    float y1 = y0 + static_cast<float>(impl_->cell_height);
-
-    // Quad vertices (top-left, top-right, bottom-right, bottom-left).
-    // Default white colour — no per-glyph colour without a grid.
-    write_glyph_quad(vertices, quad_count,
-                     x0, y0, x1, y1,
-                     slot.u0, slot.v0, slot.u1, slot.v1,
-                     1.0f, 1.0f, 1.0f,
-                     static_cast<uint32_t>(atlas_kind::static_atlas));
-
-    ++col;
-    ++quad_count;
-  }
-
-  context->Unmap(impl_->vertex_buffer.Get(), 0);
-
-  if (quad_count == 0) return {};
-
-  // --- 2. Bind pipeline state ----------------------------------------------
-  context->OMSetRenderTargets(1, rtv.impl_->rtv.GetAddressOf(), nullptr);
-  context->OMSetBlendState(impl_->blend_state.Get(), nullptr, 0xFFFFFFFF);
-  context->OMSetDepthStencilState(impl_->depth_state.Get(), 0);
-  context->RSSetState(impl_->rasterizer_state.Get());
-
-  // Set viewport to cover the full window (D3D11 does not auto-set this).
-  D3D11_VIEWPORT vp{};
-  vp.Width    = static_cast<FLOAT>(impl_->window_width);
-  vp.Height   = static_cast<FLOAT>(impl_->window_height);
-  vp.MinDepth = 0.0f;
-  vp.MaxDepth = 1.0f;
-  context->RSSetViewports(1, &vp);
-
-  context->IASetPrimitiveTopology(D3D11_PRIMITIVE_TOPOLOGY_TRIANGLELIST);
-  context->IASetInputLayout(impl_->input_layout.Get());
-
-  UINT stride = sizeof(glyph_vertex);
-  UINT offset = 0;
-  context->IASetVertexBuffers(0, 1, impl_->vertex_buffer.GetAddressOf(), &stride, &offset);
-  context->IASetIndexBuffer(impl_->index_buffer.Get(), DXGI_FORMAT_R16_UINT, 0);
-
-  context->VSSetShader(impl_->vertex_shader.Get(), nullptr, 0);
-  context->VSSetConstantBuffers(0, 1, impl_->constant_buffer.GetAddressOf());
-  context->PSSetShader(impl_->pixel_shader.Get(), nullptr, 0);
-  context->PSSetShaderResources(0, 1, impl_->atlas_srv.GetAddressOf());
-  context->PSSetShaderResources(1, 1, impl_->dyn_atlas_srv.GetAddressOf());
-  context->PSSetSamplers(0, 1, impl_->sampler_state.GetAddressOf());
-
-  // --- 3. Draw -------------------------------------------------------------
-  context->DrawIndexed(quad_count * k_indices_per_quad, 0, 0);
-
-  return {};
-}
-
-
-// ===========================================================================
-// glyph_renderer::draw_text — multi-line text rendering
-// ===========================================================================
-
-auto glyph_renderer::draw_text(d3d_device const& device,
-                                d3d_render_target_view const& rtv,
-                                std::span<std::string_view const> lines,
-                                uint32_t start_row) const
-  -> std::expected<void, std::error_code> {
-
-  auto* context = device.impl_->context.Get();
-
-  // Compute max columns that fit in the window.
-  uint32_t const max_cols = impl_->window_width / impl_->cell_width;
-  // Compute max rows that fit in the window.
-  uint32_t const max_rows = impl_->window_height / impl_->cell_height;
-
-  // --- 1. Map vertex buffer ------------------------------------------------
-  D3D11_MAPPED_SUBRESOURCE mapped{};
-  HRESULT hr = context->Map(impl_->vertex_buffer.Get(), 0,
-                              D3D11_MAP_WRITE_DISCARD, 0, &mapped);
-  if (FAILED(hr)) {
-    return std::unexpected(make_hresult_error(hr));
-  }
-
-  auto* vertices = static_cast<glyph_vertex*>(mapped.pData);
-  uint32_t quad_count = 0;
-
-  for (uint32_t row_idx = 0; row_idx < lines.size(); ++row_idx) {
-    uint32_t const screen_row = start_row + row_idx;
-    if (screen_row >= max_rows) break;  // off-screen — skip remaining lines
-
-    float const y0 = static_cast<float>(screen_row * impl_->cell_height);
-    float const y1 = y0 + static_cast<float>(impl_->cell_height);
-
-    auto const& line = lines[row_idx];
-    uint32_t const line_len = std::min(static_cast<uint32_t>(line.size()), max_cols);
-
-    for (uint32_t col = 0; col < line_len && quad_count < k_max_glyphs_per_frame; ++col) {
-      unsigned char cp = static_cast<unsigned char>(line[col]);
-
-      // Non-ASCII -> use '?' glyph (codepoint 63).
-      if (cp > 127) cp = '?';
-
-      auto& slot = impl_->glyph_slots[cp];
-      float const x0 = static_cast<float>(col * impl_->cell_width);
-      float const x1 = x0 + static_cast<float>(impl_->cell_width);
-
-      // Quad vertices (top-left, top-right, bottom-right, bottom-left).
-      write_glyph_quad(vertices, quad_count,
-                       x0, y0, x1, y1,
-                       slot.u0, slot.v0, slot.u1, slot.v1,
-                       1.0f, 1.0f, 1.0f,
-                       static_cast<uint32_t>(atlas_kind::static_atlas));
-
-      ++quad_count;
-    }
-  }
-
-  context->Unmap(impl_->vertex_buffer.Get(), 0);
-
-  if (quad_count == 0) return {};
-
-  // --- 2. Bind pipeline state ----------------------------------------------
-  context->OMSetRenderTargets(1, rtv.impl_->rtv.GetAddressOf(), nullptr);
-  context->OMSetBlendState(impl_->blend_state.Get(), nullptr, 0xFFFFFFFF);
-  context->OMSetDepthStencilState(impl_->depth_state.Get(), 0);
-  context->RSSetState(impl_->rasterizer_state.Get());
-
-  D3D11_VIEWPORT vp{};
-  vp.Width    = static_cast<FLOAT>(impl_->window_width);
-  vp.Height   = static_cast<FLOAT>(impl_->window_height);
-  vp.MinDepth = 0.0f;
-  vp.MaxDepth = 1.0f;
-  context->RSSetViewports(1, &vp);
-
-  context->IASetPrimitiveTopology(D3D11_PRIMITIVE_TOPOLOGY_TRIANGLELIST);
-  context->IASetInputLayout(impl_->input_layout.Get());
-
-  UINT stride = sizeof(glyph_vertex);
-  UINT offset = 0;
-  context->IASetVertexBuffers(0, 1, impl_->vertex_buffer.GetAddressOf(), &stride, &offset);
-  context->IASetIndexBuffer(impl_->index_buffer.Get(), DXGI_FORMAT_R16_UINT, 0);
-
-  context->VSSetShader(impl_->vertex_shader.Get(), nullptr, 0);
-  context->VSSetConstantBuffers(0, 1, impl_->constant_buffer.GetAddressOf());
-  context->PSSetShader(impl_->pixel_shader.Get(), nullptr, 0);
-  context->PSSetShaderResources(0, 1, impl_->atlas_srv.GetAddressOf());
-  context->PSSetShaderResources(1, 1, impl_->dyn_atlas_srv.GetAddressOf());
-  context->PSSetSamplers(0, 1, impl_->sampler_state.GetAddressOf());
-
-  // --- 3. Draw -------------------------------------------------------------
-  context->DrawIndexed(quad_count * k_indices_per_quad, 0, 0);
-
-  return {};
-}
 
 // ===========================================================================
 // glyph_renderer::draw_grid — render a full terminal grid with per-cell colours
@@ -1069,7 +889,7 @@ auto glyph_renderer::draw_text(d3d_device const& device,
 auto glyph_renderer::draw_grid(d3d_device const& device,
                                 d3d_render_target_view const& rtv,
                                 std::span<const render_cell> cells,
-                                size2d dims, std::optional<point2d> cursor, uint32_t padding) const
+                                size2d dims, std::optional<point2d> cursor, uint32_t padding)
   -> std::expected<void, std::error_code> {
 
   auto* context = device.impl_->context.Get();
@@ -1249,7 +1069,22 @@ auto glyph_renderer::draw_grid(d3d_device const& device,
 
   if (quad_count == 0) return {};
 
-  // --- 2. Bind pipeline state ----------------------------------------------
+  bind_pipeline_and_draw(device, rtv, quad_count);
+
+  return {};
+}
+
+// ===========================================================================
+// glyph_renderer::bind_pipeline_and_draw
+// ===========================================================================
+
+void glyph_renderer::bind_pipeline_and_draw(
+    d3d_device const& device,
+    d3d_render_target_view const& rtv,
+    uint32_t quad_count) const {
+
+  auto* context = device.impl_->context.Get();
+
   context->OMSetRenderTargets(1, rtv.impl_->rtv.GetAddressOf(), nullptr);
   context->OMSetBlendState(impl_->blend_state.Get(), nullptr, 0xFFFFFFFF);
   context->OMSetDepthStencilState(impl_->depth_state.Get(), 0);
@@ -1277,10 +1112,7 @@ auto glyph_renderer::draw_grid(d3d_device const& device,
   context->PSSetShaderResources(1, 1, impl_->dyn_atlas_srv.GetAddressOf());
   context->PSSetSamplers(0, 1, impl_->sampler_state.GetAddressOf());
 
-  // --- 3. Draw -------------------------------------------------------------
   context->DrawIndexed(quad_count * k_indices_per_quad, 0, 0);
-
-  return {};
 }
 
 // ===========================================================================
@@ -1288,7 +1120,7 @@ auto glyph_renderer::draw_grid(d3d_device const& device,
 // ===========================================================================
 
 auto glyph_renderer::update_dimensions(d3d_device const& device,
-                                        window_dimensions const& dims) const
+                                        window_dimensions const& dims)
     -> std::expected<void, std::error_code> {
   auto* context = device.impl_->context.Get();
 
@@ -1315,7 +1147,7 @@ auto glyph_renderer::update_dimensions(d3d_device const& device,
 // glyph_renderer::ensure_glyph_cached
 // ===========================================================================
 
-auto glyph_renderer::ensure_glyph_cached(char32_t cp, d3d_device const& device) const
+auto glyph_renderer::ensure_glyph_cached(char32_t cp, d3d_device const& device)
     -> uint32_t
 {
   auto* ctx = device.impl_->context.Get();
@@ -1407,7 +1239,7 @@ auto glyph_renderer::ensure_glyph_cached(char32_t cp, d3d_device const& device) 
 
 void glyph_renderer::prepare_unicode_glyphs(
     d3d_device const& device,
-    std::span<const render_cell> cells) const
+    std::span<const render_cell> cells)
 {
   constexpr auto is_wide_tail_kind = [](uint8_t kind) {
     return kind == static_cast<uint8_t>(terminal::cell_kind::wide_tail);

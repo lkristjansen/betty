@@ -2,6 +2,7 @@
 #include <cstdint>
 #include <span>
 #include <string>
+#include <variant>
 #include <vector>
 
 #include "types.hpp"
@@ -72,17 +73,30 @@ enum class action_type : uint8_t {
 };
 
 // ===========================================================================
+// cursor_pos — absolute cursor position (row, col, 0-based)
+// ===========================================================================
+
+struct cursor_pos {
+  uint32_t row = 0;
+  uint32_t col = 0;
+};
+
+// ===========================================================================
 // action — a single terminal operation
 // ===========================================================================
 
+using action_payload = std::variant<
+  std::monostate,       // carriage_return, newline, save/restore_cursor, sgr_reset
+  char32_t,             // write_char codepoint
+  uint32_t,             // count (moves), mode (erase), attr mask (sgr_set/clear_attr)
+  cursor_pos,           // move_cursor, set_scroll_region
+  terminal_color,       // sgr_set_fg, sgr_set_bg
+  std::string           // set_window_title
+>;
+
 struct action {
-  action_type type = action_type::write_char;
-  char32_t codepoint = 0;  // for write_char
-  uint32_t count     = 1;  // for relative moves
-  uint32_t row       = 0;  // for move_cursor (absolute, 0-based)
-  uint32_t col       = 0;  // for move_cursor
-  terminal_color color{};  // payload for sgr_set_fg / sgr_set_bg
-  std::string title{};     // payload for set_window_title (255 chars max)
+  action_type type;
+  action_payload payload;
 };
 
 // ===========================================================================

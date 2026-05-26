@@ -160,35 +160,33 @@ void vt_parser::dispatch_sgr() {
     uint32_t const n = params[i];
 
     if (n == sgr::reset) {
-      output_.push_back(action{.type = action_type::sgr_reset});
+      output_.push_back(action{action_type::sgr_reset, std::monostate{}});
       ++i;
     } else if (n >= sgr::fg_palette_lo && n <= sgr::fg_palette_hi) {
-      output_.push_back(action{.type = action_type::sgr_set_fg,
-                                .color = catppuccin_palette[n - sgr::fg_palette_lo]});
+      output_.push_back(action{action_type::sgr_set_fg,
+                               catppuccin_palette[n - sgr::fg_palette_lo]});
       ++i;
     } else if (n >= sgr::bg_palette_lo && n <= sgr::bg_palette_hi) {
-      output_.push_back(action{.type = action_type::sgr_set_bg,
-                                .color = catppuccin_palette[n - sgr::bg_palette_lo]});
+      output_.push_back(action{action_type::sgr_set_bg,
+                               catppuccin_palette[n - sgr::bg_palette_lo]});
       ++i;
     } else if (n >= sgr::fg_bright_lo && n <= sgr::fg_bright_hi) {
-      output_.push_back(action{.type = action_type::sgr_set_fg,
-                                .color = catppuccin_palette[(n - sgr::fg_bright_lo) + 8]});
+      output_.push_back(action{action_type::sgr_set_fg,
+                               catppuccin_palette[(n - sgr::fg_bright_lo) + 8]});
       ++i;
     } else if (n >= sgr::bg_bright_lo && n <= sgr::bg_bright_hi) {
-      output_.push_back(action{.type = action_type::sgr_set_bg,
-                                .color = catppuccin_palette[(n - sgr::bg_bright_lo) + 8]});
+      output_.push_back(action{action_type::sgr_set_bg,
+                               catppuccin_palette[(n - sgr::bg_bright_lo) + 8]});
       ++i;
     } else if (n == sgr::fg_extended) {
       i += dispatch_sgr_extended(params, i, false);
     } else if (n == sgr::bg_extended) {
       i += dispatch_sgr_extended(params, i, true);
     } else if (n == sgr::fg_default) {
-      output_.push_back(action{.type = action_type::sgr_set_fg,
-                                .color = default_fg()});
+      output_.push_back(action{action_type::sgr_set_fg, default_fg()});
       ++i;
     } else if (n == sgr::bg_default) {
-      output_.push_back(action{.type = action_type::sgr_set_bg,
-                                .color = default_bg()});
+      output_.push_back(action{action_type::sgr_set_bg, default_bg()});
       ++i;
     } else if (n == sgr::bold_on) {
       // Bold on — also clears faint (mutually exclusive).
@@ -237,16 +235,12 @@ void vt_parser::dispatch_sgr() {
 
   // Emit accumulated attribute changes.
   if (pending_on != 0) {
-    output_.push_back(action{
-      .type = action_type::sgr_set_attr,
-      .count = pending_on
-    });
+    output_.push_back(action{action_type::sgr_set_attr,
+                             uint32_t{pending_on}});
   }
   if (pending_off != 0) {
-    output_.push_back(action{
-      .type = action_type::sgr_clear_attr,
-      .count = pending_off
-    });
+    output_.push_back(action{action_type::sgr_clear_attr,
+                             uint32_t{pending_off}});
   }
 }
 
@@ -256,22 +250,23 @@ auto vt_parser::dispatch_sgr_extended(std::span<const uint32_t> const params,
   uint32_t const mode = params[i + 1];
   if (mode == 2 && i + 4 < params.size()) {
     // 38;2;R;G;B  or  48;2;R;G;B
+    auto const rgb = terminal_color{
+      static_cast<uint8_t>(std::min(params[i + 2], 255u)),
+      static_cast<uint8_t>(std::min(params[i + 3], 255u)),
+      static_cast<uint8_t>(std::min(params[i + 4], 255u)),
+      0
+    };
     output_.push_back(action{
-      .type = is_bg ? action_type::sgr_set_bg : action_type::sgr_set_fg,
-      .color = {
-        static_cast<uint8_t>(std::min(params[i + 2], 255u)),
-        static_cast<uint8_t>(std::min(params[i + 3], 255u)),
-        static_cast<uint8_t>(std::min(params[i + 4], 255u)),
-        0
-      }
+      is_bg ? action_type::sgr_set_bg : action_type::sgr_set_fg,
+      rgb
     });
     return 5;
   }
   if (mode == 5 && i + 2 < params.size()) {
     // 38;5;N  or  48;5;N
     output_.push_back(action{
-      .type = is_bg ? action_type::sgr_set_bg : action_type::sgr_set_fg,
-      .color = xterm_256_color(static_cast<uint8_t>(std::min(params[i + 2], 255u)))
+      is_bg ? action_type::sgr_set_bg : action_type::sgr_set_fg,
+      xterm_256_color(static_cast<uint8_t>(std::min(params[i + 2], 255u)))
     });
     return 3;
   }
@@ -281,92 +276,71 @@ auto vt_parser::dispatch_sgr_extended(std::span<const uint32_t> const params,
 
 void vt_parser::dispatch_ed() {
   auto const params = split_params();
-  output_.push_back(action{
-    .type = action_type::erase_display,
-    .count = params[0]
-  });
+  output_.push_back(action{action_type::erase_display,
+                           uint32_t{params[0]}});
 }
 
 void vt_parser::dispatch_el() {
   auto const params = split_params();
-  output_.push_back(action{
-    .type = action_type::erase_line,
-    .count = params[0]
-  });
+  output_.push_back(action{action_type::erase_line,
+                           uint32_t{params[0]}});
 }
 
 void vt_parser::dispatch_il() {
   auto const params = split_params();
   uint32_t const count = (params.size() > 0 && params[0] > 0) ? params[0] : 1;
-  output_.push_back(action{
-    .type = action_type::insert_lines,
-    .count = count
-  });
+  output_.push_back(action{action_type::insert_lines,
+                           uint32_t{count}});
 }
 
 void vt_parser::dispatch_dl() {
   auto const params = split_params();
   uint32_t const count = (params.size() > 0 && params[0] > 0) ? params[0] : 1;
-  output_.push_back(action{
-    .type = action_type::delete_lines,
-    .count = count
-  });
+  output_.push_back(action{action_type::delete_lines,
+                           uint32_t{count}});
 }
 
 void vt_parser::dispatch_su() {
   auto const params = split_params();
   uint32_t const count = (params.size() > 0 && params[0] > 0) ? params[0] : 1;
-  output_.push_back(action{
-    .type = action_type::scroll_up_page,
-    .count = count
-  });
+  output_.push_back(action{action_type::scroll_up_page,
+                           uint32_t{count}});
 }
 
 void vt_parser::dispatch_sd() {
   auto const params = split_params();
   uint32_t const count = (params.size() > 0 && params[0] > 0) ? params[0] : 1;
-  output_.push_back(action{
-    .type = action_type::scroll_down_page,
-    .count = count
-  });
+  output_.push_back(action{action_type::scroll_down_page,
+                           uint32_t{count}});
 }
 
 void vt_parser::dispatch_decstbm() {
   auto const params = split_params();
   uint32_t const top = (params.size() > 0) ? params[0] : 1;
   uint32_t const bottom = (params.size() > 1) ? params[1] : 0;
-  output_.push_back(action{
-    .type = action_type::set_scroll_region,
-    .row = top,
-    .col = bottom
-  });
+  output_.push_back(action{action_type::set_scroll_region,
+                           cursor_pos{top, bottom}});
 }
 
 void vt_parser::dispatch_ich() {
   auto const params = split_params();
   uint32_t const count = (params.size() > 0 && params[0] > 0) ? params[0] : 1;
-  output_.push_back(action{
-    .type = action_type::insert_chars,
-    .count = count
-  });
+  output_.push_back(action{action_type::insert_chars,
+                           uint32_t{count}});
 }
 
 void vt_parser::dispatch_dch() {
   auto const params = split_params();
   uint32_t const count = (params.size() > 0 && params[0] > 0) ? params[0] : 1;
-  output_.push_back(action{
-    .type = action_type::delete_chars,
-    .count = count
-  });
+  output_.push_back(action{action_type::delete_chars,
+                           uint32_t{count}});
 }
 
 void vt_parser::dispatch_ech() {
   auto const params = split_params();
   uint32_t const count = (params.size() > 0 && params[0] > 0) ? params[0] : 1;
-  output_.push_back(action{
-    .type = action_type::erase_chars,
-    .count = count
-  });
+  output_.push_back(action{action_type::erase_chars,
+                           uint32_t{count}});
 }
 
 void vt_parser::dispatch_cursor(char const final_byte) {
@@ -377,36 +351,21 @@ void vt_parser::dispatch_cursor(char const final_byte) {
 
   switch (final_byte) {
   case 'A':
-    output_.push_back(action{
-      .type = action_type::move_cursor_up,
-      .count = p1
-    });
+    output_.push_back(action{action_type::move_cursor_up, uint32_t{p1}});
     return;
   case 'B':
-    output_.push_back(action{
-      .type = action_type::move_cursor_down,
-      .count = p1
-    });
+    output_.push_back(action{action_type::move_cursor_down, uint32_t{p1}});
     return;
   case 'C':
-    output_.push_back(action{
-      .type = action_type::move_cursor_forward,
-      .count = p1
-    });
+    output_.push_back(action{action_type::move_cursor_forward, uint32_t{p1}});
     return;
   case 'D':
-    output_.push_back(action{
-      .type = action_type::move_cursor_back,
-      .count = p1
-    });
+    output_.push_back(action{action_type::move_cursor_back, uint32_t{p1}});
     return;
   case 'H':
   case 'f':
-    output_.push_back(action{
-      .type = action_type::move_cursor,
-      .row = p1 - 1,
-      .col = p2 - 1
-    });
+    output_.push_back(action{action_type::move_cursor,
+                             cursor_pos{p1 - 1, p2 - 1}});
     return;
   }
 }
@@ -440,10 +399,8 @@ void vt_parser::dispatch_osc() {
     title = title.substr(0, k_max_title_length);
   }
 
-  output_.push_back(action{
-    .type = action_type::set_window_title,
-    .title = std::string(title)
-  });
+  output_.push_back(action{action_type::set_window_title,
+                           std::string(title)});
 }
 
 // ===========================================================================
@@ -481,13 +438,13 @@ auto vt_parser::parse(unsigned char const byte) -> std::span<const action> {
 auto vt_parser::handle_ground(unsigned char const byte) -> handler_result {
   switch (byte) {
   case '\r':  // vt_bytes::is_cr
-    output_.push_back(action{.type = action_type::carriage_return});
+    output_.push_back(action{action_type::carriage_return, std::monostate{}});
     return handler_result::done;
   case '\n':  // vt_bytes::is_lf
-    output_.push_back(action{.type = action_type::newline});
+    output_.push_back(action{action_type::newline, std::monostate{}});
     return handler_result::done;
   case 0x08:  // vt_bytes::is_bs — backspace
-    output_.push_back(action{.type = action_type::move_cursor_back, .count = 1});
+    output_.push_back(action{action_type::move_cursor_back, uint32_t{1}});
     return handler_result::done;
   case 0x7F:  // DEL — silently ignore
     return handler_result::done;
@@ -496,10 +453,8 @@ auto vt_parser::handle_ground(unsigned char const byte) -> handler_result {
     return handler_result::done;
   default:
     if (vt_bytes::is_ascii_printable(byte)) {
-      output_.push_back(action{
-        .type = action_type::write_char,
-        .codepoint = static_cast<char32_t>(byte)
-      });
+      output_.push_back(action{action_type::write_char,
+                               static_cast<char32_t>(byte)});
       return handler_result::done;
     }
     if (!vt_bytes::is_utf8_lead(byte)) {
@@ -525,17 +480,13 @@ auto vt_parser::handle_utf8_accum(unsigned char const byte) -> handler_result {
   switch (result) {
   case utf8_decoder::result::complete:
     state_ = state::ground;
-    output_.push_back(action{
-      .type = action_type::write_char,
-      .codepoint = utf8_.codepoint()
-    });
+    output_.push_back(action{action_type::write_char,
+                             char32_t{utf8_.codepoint()}});
     return handler_result::done;
   case utf8_decoder::result::error:
     state_ = state::ground;
-    output_.push_back(action{
-      .type = action_type::write_char,
-      .codepoint = 0xFFFDu
-    });
+    output_.push_back(action{action_type::write_char,
+                             char32_t{0xFFFDu}});
     return handler_result::done;
   case utf8_decoder::result::incomplete:
     return handler_result::done;
@@ -555,11 +506,11 @@ auto vt_parser::handle_escape(unsigned char const byte) -> handler_result {
     return handler_result::done;
   case '7':   // DECSC — Save Cursor
     state_ = state::ground;
-    output_.push_back(action{.type = action_type::save_cursor});
+    output_.push_back(action{action_type::save_cursor, std::monostate{}});
     return handler_result::done;
   case '8':   // DECRC — Restore Cursor
     state_ = state::ground;
-    output_.push_back(action{.type = action_type::restore_cursor});
+    output_.push_back(action{action_type::restore_cursor, std::monostate{}});
     return handler_result::done;
   default:
     // Unknown escape sequence — discard.

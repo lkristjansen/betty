@@ -58,24 +58,18 @@ struct shell_impl {
   // is unblocked and joined cleanly.
   void shutdown() noexcept {
     // 1. Signal the read thread to stop at its next loop iteration.
+    //    This alone won't unblock a thread stuck in ReadFile, but it
+    //    ensures the stop token is set by the time step 2 unblocks it.
     read_thread.request_stop();
 
-    // 2. Cancel any blocking synchronous I/O the read thread might be
-    //    stuck on (ReadFile on the output pipe).  This must happen
-    //    BEFORE the jthread destructor runs, otherwise join() blocks
-    //    indefinitely on a still-pending ReadFile.
-    if (read_thread.joinable()) {
-      if (!CancelSynchronousIo(read_thread.native_handle())) {
-        util::log_error(make_win32_error(), "shell shutdown: CancelSynchronousIo failed");
-      }
-    }
-
-    // 3. Close the ConPTY early.  This also closes the write-end of the
-    //    output pipe (conpty_output), causing ReadFile to return EOF
-    //    as a secondary unblocking mechanism.
+    // 2. Close the ConPTY.  This closes the write-end of the output
+    //    pipe (conpty_output), causing ReadFile on the parent's read-end
+    //    to return EOF — the deterministic unblock mechanism.  By this
+    //    point request_stop() has already been called, so the read thread
+    //    will see the stop token and break silently.
     hpc.reset();
 
-    // 4. Wake any consumers blocked on output_cv so they don't hang.
+    // 3. Wake any consumers blocked on output_cv so they don't hang.
     output_cv.notify_all();
   }
 
