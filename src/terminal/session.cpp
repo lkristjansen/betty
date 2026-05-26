@@ -193,11 +193,11 @@ auto terminal_session::is_following_output() const -> bool { return grid_.is_fol
 // observer
 // ===========================================================================
 
-void terminal_session::set_observer(std::function<void(std::string_view)> on_title) {
+void terminal_session::set_observer(on_title_callback on_title) {
   grid_.set_observer(std::move(on_title));
 }
 
-void terminal_session::on_exited(std::function<void()> callback) {
+void terminal_session::on_exited(on_exited_callback callback) {
   on_exited_ = std::move(callback);
 }
 

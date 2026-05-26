@@ -4,6 +4,7 @@
 #include <optional>
 #include <span>
 #include <string_view>
+#include <utility>
 
 #include "grid.hpp"
 #include "input_handler.hpp"
@@ -79,10 +80,12 @@ public:
 
   // Register a callback invoked when the shell emits an OSC window-title
   // sequence (OSC 0 / 1 / 2).
-  void set_observer(std::function<void(std::string_view)> on_title);
+  using on_exited_callback = std::move_only_function<void()>;
+
+  void set_observer(on_title_callback on_title);
 
   // Register a callback invoked exactly once when the shell process exits.
-  void on_exited(std::function<void()> callback);
+  void on_exited(on_exited_callback callback);
 
 private:
   // Feed raw bytes through the VT parser and apply resulting actions to the grid.
@@ -93,7 +96,7 @@ private:
   vt_parser parser_;
   bool shell_input_failed_ = false;
   bool exit_notified_ = false;
-  std::function<void()> on_exited_;
+  on_exited_callback on_exited_;
 };
 
 } // namespace betty::terminal

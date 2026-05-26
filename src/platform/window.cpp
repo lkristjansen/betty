@@ -313,20 +313,19 @@ auto win32_window::set_window_title(std::string_view title) -> void {
 
 // --- set_key_callback / set_char_callback ----------------------------------
 
-auto win32_window::set_key_callback(std::function<void(vk_code, bool ctrl, bool shift, bool alt)> cb) -> void {
+auto win32_window::set_key_callback(on_key_callback cb) -> void {
   if (state_) {
     state_->callbacks.on_key = std::move(cb);
   }
 }
 
-auto win32_window::set_char_callback(std::function<void(uint32_t codepoint)> cb) -> void {
+auto win32_window::set_char_callback(on_char_callback cb) -> void {
   if (state_) {
     state_->callbacks.on_char = std::move(cb);
   }
 }
 
-auto win32_window::set_resize_callback(
-    std::function<void(uint32_t width, uint32_t height, bool completed)> cb) -> void {
+auto win32_window::set_resize_callback(on_resize_callback cb) -> void {
   if (state_) {
     state_->callbacks.on_resize = std::move(cb);
   }

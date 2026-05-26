@@ -14,6 +14,10 @@
 
 namespace betty::terminal {
 
+// --- Callback type aliases -------------------------------------------------
+
+using on_title_callback = std::move_only_function<void(std::string_view)>;
+
 // ===========================================================================
 // terminal_grid — 2D cell grid with cursor tracking and auto-scroll
 // ===========================================================================
@@ -127,7 +131,7 @@ public:
 
   // --- Observer for out-of-band terminal events (e.g. OSC window title) -----
 
-  void set_observer(std::function<void(std::string_view)> on_title);
+  void set_observer(on_title_callback on_title);
 
 private:
   uint32_t cols_;
@@ -141,7 +145,7 @@ private:
   mutable std::vector<platform::render_cell> render_cache_;
 
   // Observer for out-of-band terminal events (OSC window title, etc.).
-  std::function<void(std::string_view)> on_window_title_;
+  on_title_callback on_window_title_;
 
   // Pending auto-wrap flag. Set when write_char wraps to the next row;
   // consumed by the next \n to prevent a double row advance.

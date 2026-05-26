@@ -671,7 +671,7 @@ void terminal_grid::resize(uint32_t new_cols, uint32_t new_rows) {
 // set_observer
 // ===========================================================================
 
-void terminal_grid::set_observer(std::function<void(std::string_view)> on_title) {
+void terminal_grid::set_observer(on_title_callback on_title) {
   on_window_title_ = std::move(on_title);
 }
 

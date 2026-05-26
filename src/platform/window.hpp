@@ -2,6 +2,7 @@
 #include <cstdint>
 #include <expected>
 #include <functional>
+#include <utility>
 #include <memory>
 #include <string>
 #include <string_view>
@@ -10,15 +11,21 @@
 
 namespace betty::platform {
 
+// --- Callback type aliases -------------------------------------------------
+
+using on_key_callback    = std::move_only_function<void(vk_code, bool ctrl, bool shift, bool alt)>;
+using on_char_callback   = std::move_only_function<void(uint32_t codepoint)>;
+using on_resize_callback = std::move_only_function<void(uint32_t width, uint32_t height, bool completed)>;
+
 namespace detail {
 // Callback storage and constraints (heap-allocated; pointer stored via
 // GWLP_USERDATA).  Internal implementation detail.
 struct window_callbacks {
-  std::function<void(vk_code, bool ctrl, bool shift, bool alt)> on_key;
-  std::function<void(uint32_t)> on_char;
+  on_key_callback on_key;
+  on_char_callback on_char;
   // Resize callback — called on WM_SIZE (completed=false during drag,
   // completed=true for maximize/restore) and WM_EXITSIZEMOVE (completed=true).
-  std::function<void(uint32_t width, uint32_t height, bool completed)> on_resize;
+  on_resize_callback on_resize;
 };
 
 struct window_state {
@@ -60,9 +67,9 @@ struct win32_window {
 
   // --- Callback setters ----------------------------------------------------
 
-  auto set_key_callback(std::function<void(vk_code, bool ctrl, bool shift, bool alt)> cb) -> void;
-  auto set_char_callback(std::function<void(uint32_t codepoint)> cb) -> void;
-  auto set_resize_callback(std::function<void(uint32_t width, uint32_t height, bool completed)> cb) -> void;
+  auto set_key_callback(on_key_callback cb) -> void;
+  auto set_char_callback(on_char_callback cb) -> void;
+  auto set_resize_callback(on_resize_callback cb) -> void;
 
   // --- Configuration -------------------------------------------------------
 
