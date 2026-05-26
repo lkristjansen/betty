@@ -21,10 +21,11 @@ application::application(platform::win32_window window,
     : window_(std::move(window))
     , renderer_ctx_(std::move(renderer_ctx))
     , session_(std::move(session)) {
-  // Forward OSC window-title changes to the title bar.
-  session_.set_observer([this](std::string_view title) {
-    platform::set_window_title(window_, title);
-  });
+  // NOTE: the OSC window-title observer is installed in run(), not here.
+  // `application` may be moved (e.g. through the std::expected returned by
+  // make_application) between construction and run(); capturing `this` here
+  // would leave the observer pointing at a moved-from object, so the title
+  // updates would silently fire against a dangling window_ reference.
 }
 
 // ===========================================================================
@@ -83,6 +84,13 @@ int application::run() {
     [this](uint32_t width, uint32_t height, bool completed) {
       on_resize(width, height, completed);
     });
+
+  // Forward OSC window-title changes to the title bar.  Installed here
+  // (not in the constructor) because `this` must refer to the final,
+  // post-move address of the application.
+  session_.set_observer([this](std::string_view title) {
+    platform::set_window_title(window_, title);
+  });
 
   // Message loop.
   int exit_code = 0;
