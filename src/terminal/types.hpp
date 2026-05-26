@@ -16,8 +16,16 @@ enum class cell_attr : uint8_t {
   underline     = 1 << 3,
   strikethrough = 1 << 4,
   reverse       = 1 << 5,
-  wide          = 1 << 6,  // first cell of a 2-cell-wide character
-  wide_tail     = 1 << 7,  // continuation cell (right half of wide char)
+};
+
+// ===========================================================================
+// cell_kind — structural cell type (normal vs. wide-character halves)
+// ===========================================================================
+
+enum class cell_kind : uint8_t {
+  normal    = 0,
+  wide_lead = 1,  // first cell of a 2-cell-wide character
+  wide_tail = 2,  // continuation cell (right half of wide char)
 };
 
 inline constexpr auto operator|(cell_attr a, cell_attr b) -> cell_attr {
@@ -106,7 +114,8 @@ struct grid_cell {
   char32_t codepoint = U' ';         // default: space
   terminal_color fg = default_fg();  // foreground colour
   terminal_color bg = default_bg();  // background colour
-  cell_attr attr = cell_attr::none;  // text attributes (bold, italic, etc.)
+  cell_kind kind = cell_kind::normal;  // structural cell type
+  cell_attr attr = cell_attr::none;    // text attributes (bold, italic, etc.)
 };
 
 } // namespace betty::terminal

@@ -1127,8 +1127,14 @@ auto glyph_renderer::draw_grid(d3d_device const& device,
   constexpr uint8_t k_attr_underline     = terminal::to_uint8(cell_attr::underline);
   constexpr uint8_t k_attr_strikethrough = terminal::to_uint8(cell_attr::strikethrough);
   constexpr uint8_t k_attr_reverse       = terminal::to_uint8(cell_attr::reverse);
-  constexpr uint8_t k_attr_wide          = terminal::to_uint8(cell_attr::wide);
-  constexpr uint8_t k_attr_wide_tail     = terminal::to_uint8(cell_attr::wide_tail);
+
+  // Cell kind helpers (canonical: terminal::cell_kind).
+  constexpr auto is_wide_lead = [](uint8_t kind) {
+    return kind == static_cast<uint8_t>(terminal::cell_kind::wide_lead);
+  };
+  constexpr auto is_wide_tail = [](uint8_t kind) {
+    return kind == static_cast<uint8_t>(terminal::cell_kind::wide_tail);
+  };
 
   // Only draw the cursor if it is set and lies within the visible area.
   bool const cursor_visible =
@@ -1145,12 +1151,12 @@ auto glyph_renderer::draw_grid(d3d_device const& device,
       auto const& cell = cells[idx];
 
       // Skip wide_tail cells — they are rendered as part of the preceding wide cell.
-      if (cell.attr & k_attr_wide_tail) {
+      if (is_wide_tail(cell.kind)) {
         ++col;
         continue;
       }
 
-      bool const is_wide = (cell.attr & k_attr_wide) != 0;
+      bool const is_wide = is_wide_lead(cell.kind);
       float const glyph_cell_width = is_wide ? k_wide_cell_factor : k_normal_cell_factor;
       float const x0 = pad + static_cast<float>(col * impl_->cell_width);
       float const x1 = x0 + glyph_cell_width * static_cast<float>(impl_->cell_width);
@@ -1403,12 +1409,14 @@ void glyph_renderer::prepare_unicode_glyphs(
     d3d_device const& device,
     std::span<const render_cell> cells) const
 {
-  constexpr uint8_t k_attr_wide_tail = terminal::to_uint8(terminal::cell_attr::wide_tail);
+  constexpr auto is_wide_tail_kind = [](uint8_t kind) {
+    return kind == static_cast<uint8_t>(terminal::cell_kind::wide_tail);
+  };
 
   for (auto const& cell : cells) {
     if (cell.codepoint <= 127) continue;
     if (cell.codepoint == U' ') continue;
-    if (cell.attr & k_attr_wide_tail) continue;
+    if (is_wide_tail_kind(cell.kind)) continue;
     (void)ensure_glyph_cached(cell.codepoint, device);
   }
 }

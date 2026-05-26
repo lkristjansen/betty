@@ -54,7 +54,7 @@ void terminal_grid::write_char(char32_t cp) {
     if (cursor_.col() < cols_ && rows_ > 0) {
       auto row = buffer_.active_row(cursor_.row());
       row[cursor_.col()] = grid_cell{cp, sgr_.fg, sgr_.bg,
-                                      sgr_.attr | cell_attr::wide};
+                                      cell_kind::wide_lead, sgr_.attr};
     }
     cursor_.increment_col(cols_);
 
@@ -62,7 +62,7 @@ void terminal_grid::write_char(char32_t cp) {
     if (cursor_.col() < cols_ && rows_ > 0) {
       auto row = buffer_.active_row(cursor_.row());
       row[cursor_.col()] = grid_cell{U' ', sgr_.fg, sgr_.bg,
-                                      sgr_.attr | cell_attr::wide_tail};
+                                      cell_kind::wide_tail, sgr_.attr};
     }
     cursor_.increment_col(cols_);
   } else {
@@ -73,7 +73,8 @@ void terminal_grid::write_char(char32_t cp) {
     }
     if (cursor_.col() < cols_ && rows_ > 0) {
       auto row = buffer_.active_row(cursor_.row());
-      row[cursor_.col()] = grid_cell{cp, sgr_.fg, sgr_.bg, sgr_.attr};
+      row[cursor_.col()] = grid_cell{cp, sgr_.fg, sgr_.bg,
+                                      cell_kind::normal, sgr_.attr};
     }
     cursor_.increment_col(cols_);
   }
@@ -99,7 +100,7 @@ void terminal_grid::write_char(char32_t cp) {
 void terminal_grid::write_cell(uint32_t col, char32_t cp,
                                 terminal_color fg, terminal_color bg, cell_attr attr) {
   auto row = buffer_.active_row(cursor_.row());
-  row[col] = grid_cell{cp, fg, bg, attr};
+  row[col] = grid_cell{cp, fg, bg, cell_kind::normal, attr};
 }
 
 // ===========================================================================
@@ -111,7 +112,8 @@ void terminal_grid::write_combining_char(char32_t cp) {
   if (cursor_.col() == 0) {
     if (rows_ > 0) {
       auto row = buffer_.active_row(cursor_.row());
-      row[cursor_.col()] = grid_cell{cp, sgr_.fg, sgr_.bg, sgr_.attr};
+      row[cursor_.col()] = grid_cell{cp, sgr_.fg, sgr_.bg,
+                                      cell_kind::normal, sgr_.attr};
     }
     cursor_.increment_col(cols_);
     return;
@@ -122,9 +124,10 @@ void terminal_grid::write_combining_char(char32_t cp) {
   auto& prev_cell = row[cursor_.col() - 1];
 
   // Don't compose onto wide_tail cells.
-  if ((to_uint8(prev_cell.attr) & to_uint8(cell_attr::wide_tail)) != 0) {
+  if (prev_cell.kind == cell_kind::wide_tail) {
     if (rows_ > 0) {
-      row[cursor_.col()] = grid_cell{cp, sgr_.fg, sgr_.bg, sgr_.attr};
+      row[cursor_.col()] = grid_cell{cp, sgr_.fg, sgr_.bg,
+                                      cell_kind::normal, sgr_.attr};
     }
     cursor_.increment_col(cols_);
     return;
@@ -134,7 +137,8 @@ void terminal_grid::write_combining_char(char32_t cp) {
   if (base == U' ' || base == 0) {
     // Empty cell — write combining char as width 1.
     if (rows_ > 0) {
-      row[cursor_.col()] = grid_cell{cp, sgr_.fg, sgr_.bg, sgr_.attr};
+      row[cursor_.col()] = grid_cell{cp, sgr_.fg, sgr_.bg,
+                                      cell_kind::normal, sgr_.attr};
     }
     cursor_.increment_col(cols_);
     return;
@@ -148,7 +152,8 @@ void terminal_grid::write_combining_char(char32_t cp) {
   } else {
     // Uncomposable — fallback to width 1.
     if (rows_ > 0) {
-      row[cursor_.col()] = grid_cell{cp, sgr_.fg, sgr_.bg, sgr_.attr};
+      row[cursor_.col()] = grid_cell{cp, sgr_.fg, sgr_.bg,
+                                      cell_kind::normal, sgr_.attr};
     }
     cursor_.increment_col(cols_);
   }
@@ -627,6 +632,7 @@ auto terminal_grid::render_cells() -> std::span<const platform::render_cell> {
       [](grid_cell const& src) {
         platform::render_cell dst;
         dst.codepoint = src.codepoint;
+        dst.kind = static_cast<uint8_t>(src.kind);
         dst.attr = to_uint8(src.attr);
         dst.fg = src.fg.is_default() ? platform::k_default_fg_color
                                      : platform::rgb_color{src.fg.r, src.fg.g, src.fg.b};

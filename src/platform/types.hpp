@@ -99,6 +99,7 @@ struct render_cell {
   char32_t codepoint = U' ';
   rgb_color fg;
   rgb_color bg;
+  uint8_t kind = 0;  // terminal::cell_kind
   uint8_t attr = 0;  // terminal::cell_attr bitmask
 };
 

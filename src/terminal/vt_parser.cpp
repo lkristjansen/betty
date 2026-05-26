@@ -458,7 +458,7 @@ auto vt_parser::parse(unsigned char const byte) -> std::span<const action> {
   output_.clear();
   unsigned char cur = byte;
   while (true) {
-    handler_result hr;
+    handler_result hr = handler_result::done;
     switch (state_) {
       case state::ground:           hr = handle_ground(cur); break;
       case state::utf8_accum:       hr = handle_utf8_accum(cur); break;

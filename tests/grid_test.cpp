@@ -4,11 +4,6 @@
 
 using namespace betty::terminal;
 
-// Helper: check if a cell has a given attribute flag.
-static bool has_attr(cell_attr val, cell_attr flag) {
-    return (static_cast<uint8_t>(val) & static_cast<uint8_t>(flag)) != 0;
-}
-
 // ===========================================================================
 // Construction and basic properties
 // ===========================================================================
@@ -1825,11 +1820,11 @@ TEST_CASE("Grid — ECH cursor unchanged", "[grid][task14][ech]") {
 TEST_CASE("Grid — wide char occupies two cells", "[grid][task15][wide]") {
     terminal_grid g(10, 5);
     g.write_char(0x4E2D);  // 中 (CJK, width 2)
-    // Cell (0,0) = 中 with wide attr
+    // Cell (0,0) = 中 with wide_lead kind
     CHECK(g.cell(0, 0).codepoint == 0x4E2D);
-    CHECK(has_attr(g.cell(0, 0).attr, cell_attr::wide));
+    CHECK(g.cell(0, 0).kind == cell_kind::wide_lead);
     // Cell (0,1) = continuation
-    CHECK(has_attr(g.cell(0, 1).attr, cell_attr::wide_tail));
+    CHECK(g.cell(0, 1).kind == cell_kind::wide_tail);
     // Cursor at column 2
     CHECK(g.cursor_col() == 2);
     CHECK(g.cursor_row() == 0);
@@ -1847,8 +1842,8 @@ TEST_CASE("Grid — wide char at last column wraps", "[grid][task15][wide]") {
     CHECK(g.cursor_row() == 1);
     CHECK(g.cursor_col() == 2);  // wide char at cols 0-1, cursor now at 2
     CHECK(g.cell(1, 0).codepoint == 0x4E2D);
-    CHECK(has_attr(g.cell(1, 0).attr, cell_attr::wide));
-    CHECK(has_attr(g.cell(1, 1).attr, cell_attr::wide_tail));
+    CHECK(g.cell(1, 0).kind == cell_kind::wide_lead);
+    CHECK(g.cell(1, 1).kind == cell_kind::wide_tail);
 }
 
 TEST_CASE("Grid — wide char at second-to-last column fits", "[grid][task15][wide]") {
@@ -1859,8 +1854,8 @@ TEST_CASE("Grid — wide char at second-to-last column fits", "[grid][task15][wi
 
     g.write_char(0x4E2D);  // wide char at col 3, fits at cols 3-4
     CHECK(g.cell(0, 3).codepoint == 0x4E2D);
-    CHECK(has_attr(g.cell(0, 3).attr, cell_attr::wide));
-    CHECK(has_attr(g.cell(0, 4).attr, cell_attr::wide_tail));
+    CHECK(g.cell(0, 3).kind == cell_kind::wide_lead);
+    CHECK(g.cell(0, 4).kind == cell_kind::wide_tail);
     // After writing 2 cells, cursor goes to col 5 which auto-wraps to row 1.
     CHECK(g.cursor_row() == 1);
     CHECK(g.cursor_col() == 0);
@@ -1878,11 +1873,11 @@ TEST_CASE("Grid — render_cells marks wide and continuation", "[grid][task15][w
     terminal_grid g(10, 5);
     g.write_char(0x4E2D);
     auto cells = g.render_cells();
-    // Cell 0: codepoint = 0x4E2D, attr has wide flag
+    // Cell 0: codepoint = 0x4E2D, kind is wide_lead
     CHECK(cells[0].codepoint == 0x4E2D);
-    CHECK((cells[0].attr & (1u << 6)) != 0);  // k_attr_wide
-    // Cell 1: continuation, attr has wide_tail flag
-    CHECK((cells[1].attr & (1u << 7)) != 0);  // k_attr_wide_tail
+    CHECK(cells[0].kind == static_cast<uint8_t>(cell_kind::wide_lead));
+    // Cell 1: continuation, kind is wide_tail
+    CHECK(cells[1].kind == static_cast<uint8_t>(cell_kind::wide_tail));
 }
 
 TEST_CASE("Grid — wide char fg/bg colours propagated to both cells", "[grid][task15][wide]") {

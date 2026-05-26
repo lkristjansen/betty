@@ -32,14 +32,14 @@ TEST_CASE("scrollback_buffer — all cells initialised to space", "[scrollback_b
 TEST_CASE("scrollback_buffer — active_row returns mutable span", "[scrollback_buffer]") {
     scrollback_buffer buf(5, 3, 10);
     auto row = buf.active_row(1);
-    row[2] = grid_cell{U'X', {}, {}, cell_attr::none};
+    row[2] = grid_cell{U'X', {}, {}, cell_kind::normal, cell_attr::none};
     CHECK(buf.active_row(1)[2].codepoint == U'X');
 }
 
 TEST_CASE("scrollback_buffer — rendered_row matches active_row when not scrolled", "[scrollback_buffer]") {
     scrollback_buffer buf(5, 3, 10);
     auto active = buf.active_row(0);
-    active[0] = grid_cell{U'A', {}, {}, cell_attr::none};
+    active[0] = grid_cell{U'A', {}, {}, cell_kind::normal, cell_attr::none};
 
     auto rendered = buf.rendered_row(0);
     CHECK(rendered[0].codepoint == U'A');
@@ -51,8 +51,8 @@ TEST_CASE("scrollback_buffer — rendered_row matches active_row when not scroll
 
 TEST_CASE("scrollback_buffer — push_scrollback shifts content", "[scrollback_buffer]") {
     scrollback_buffer buf(3, 2, 10);
-    buf.active_row(0)[0] = grid_cell{U'A', {}, {}, cell_attr::none};
-    buf.active_row(1)[0] = grid_cell{U'B', {}, {}, cell_attr::none};
+    buf.active_row(0)[0] = grid_cell{U'A', {}, {}, cell_kind::normal, cell_attr::none};
+    buf.active_row(1)[0] = grid_cell{U'B', {}, {}, cell_kind::normal, cell_attr::none};
 
     buf.push_scrollback();
 
@@ -65,8 +65,8 @@ TEST_CASE("scrollback_buffer — push_scrollback shifts content", "[scrollback_b
 
 TEST_CASE("scrollback_buffer — push_scrollback wraps at max_scrollback", "[scrollback_buffer]") {
     scrollback_buffer buf(3, 2, 2);
-    buf.active_row(0)[0] = grid_cell{U'A', {}, {}, cell_attr::none};
-    buf.active_row(1)[0] = grid_cell{U'B', {}, {}, cell_attr::none};
+    buf.active_row(0)[0] = grid_cell{U'A', {}, {}, cell_kind::normal, cell_attr::none};
+    buf.active_row(1)[0] = grid_cell{U'B', {}, {}, cell_kind::normal, cell_attr::none};
 
     buf.push_scrollback(); // count = 1
     buf.push_scrollback(); // count = 2
@@ -83,8 +83,8 @@ TEST_CASE("scrollback_buffer — push_scrollback wraps at max_scrollback", "[scr
 
 TEST_CASE("scrollback_buffer — scroll_viewport moves visible window", "[scrollback_buffer]") {
     scrollback_buffer buf(3, 2, 10);
-    buf.active_row(0)[0] = grid_cell{U'A', {}, {}, cell_attr::none};
-    buf.active_row(1)[0] = grid_cell{U'B', {}, {}, cell_attr::none};
+    buf.active_row(0)[0] = grid_cell{U'A', {}, {}, cell_kind::normal, cell_attr::none};
+    buf.active_row(1)[0] = grid_cell{U'B', {}, {}, cell_kind::normal, cell_attr::none};
     buf.push_scrollback(); // A is now in scrollback
 
     CHECK(buf.is_following_output());
@@ -119,7 +119,7 @@ TEST_CASE("scrollback_buffer — scroll_viewport forward clamps to 0", "[scrollb
 
 TEST_CASE("scrollback_buffer — clear_all resets everything", "[scrollback_buffer]") {
     scrollback_buffer buf(3, 2, 10);
-    buf.active_row(0)[0] = grid_cell{U'X', {}, {}, cell_attr::none};
+    buf.active_row(0)[0] = grid_cell{U'X', {}, {}, cell_kind::normal, cell_attr::none};
     buf.push_scrollback();
     (void)buf.scroll_viewport(1);
 
@@ -136,16 +136,16 @@ TEST_CASE("scrollback_buffer — clear_all resets everything", "[scrollback_buff
 
 TEST_CASE("scrollback_buffer — resize same dims is no-op", "[scrollback_buffer]") {
     scrollback_buffer buf(5, 3, 10);
-    buf.active_row(0)[0] = grid_cell{U'X', {}, {}, cell_attr::none};
+    buf.active_row(0)[0] = grid_cell{U'X', {}, {}, cell_kind::normal, cell_attr::none};
     buf.resize(5, 3, 10);
     CHECK(buf.active_row(0)[0].codepoint == U'X');
 }
 
 TEST_CASE("scrollback_buffer — resize larger preserves content", "[scrollback_buffer]") {
     scrollback_buffer buf(3, 2, 10);
-    buf.active_row(0)[0] = grid_cell{U'a', {}, {}, cell_attr::none};
-    buf.active_row(0)[1] = grid_cell{U'b', {}, {}, cell_attr::none};
-    buf.active_row(1)[0] = grid_cell{U'c', {}, {}, cell_attr::none};
+    buf.active_row(0)[0] = grid_cell{U'a', {}, {}, cell_kind::normal, cell_attr::none};
+    buf.active_row(0)[1] = grid_cell{U'b', {}, {}, cell_kind::normal, cell_attr::none};
+    buf.active_row(1)[0] = grid_cell{U'c', {}, {}, cell_kind::normal, cell_attr::none};
 
     buf.resize(5, 4, 10);
     CHECK(buf.cols() == 5);
@@ -161,11 +161,11 @@ TEST_CASE("scrollback_buffer — resize smaller reflows rows", "[scrollback_buff
     scrollback_buffer buf(5, 2, 10);
     // Row 0: a b c d e
     for (uint32_t c = 0; c < 5; ++c) {
-        buf.active_row(0)[c] = grid_cell{static_cast<char32_t>(U'a' + c), {}, {}, cell_attr::none};
+        buf.active_row(0)[c] = grid_cell{static_cast<char32_t>(U'a' + c), {}, {}, cell_kind::normal, cell_attr::none};
     }
     // Row 1: f g h i j
     for (uint32_t c = 0; c < 5; ++c) {
-        buf.active_row(1)[c] = grid_cell{static_cast<char32_t>(U'f' + c), {}, {}, cell_attr::none};
+        buf.active_row(1)[c] = grid_cell{static_cast<char32_t>(U'f' + c), {}, {}, cell_kind::normal, cell_attr::none};
     }
 
     buf.resize(3, 2, 10);
@@ -193,7 +193,7 @@ TEST_CASE("scrollback_buffer — resize smaller reflows rows", "[scrollback_buff
 
 TEST_CASE("scrollback_buffer — resize to zero resets", "[scrollback_buffer]") {
     scrollback_buffer buf(10, 10, 10);
-    buf.active_row(0)[0] = grid_cell{U'X', {}, {}, cell_attr::none};
+    buf.active_row(0)[0] = grid_cell{U'X', {}, {}, cell_kind::normal, cell_attr::none};
     buf.resize(0, 0, 10);
     CHECK(buf.cols() == 0);
     CHECK(buf.rows() == 0);
@@ -216,7 +216,7 @@ TEST_CASE("scrollback_buffer — resize extreme narrowing does not corrupt", "[s
     char32_t ch = U'A';
     for (uint32_t r = 0; r < 5; ++r)
         for (uint32_t c = 0; c < 10; ++c)
-            buf.active_row(r)[c] = grid_cell{ch++, {}, {}, cell_attr::none};
+            buf.active_row(r)[c] = grid_cell{ch++, {}, {}, cell_kind::normal, cell_attr::none};
 
     buf.resize(1, 1, 2);  // 10x5=50 cells -> at least 50 chunks, capacity=3
 
@@ -237,13 +237,13 @@ TEST_CASE("scrollback_buffer — resize discards oldest rows on overflow", "[scr
     scrollback_buffer buf(4, 3, 1);  // capacity = 4 rows
     // Row 0 (oldest): A B C D
     for (uint32_t c = 0; c < 4; ++c)
-        buf.active_row(0)[c] = grid_cell{static_cast<char32_t>(U'A' + c), {}, {}, cell_attr::none};
+        buf.active_row(0)[c] = grid_cell{static_cast<char32_t>(U'A' + c), {}, {}, cell_kind::normal, cell_attr::none};
     // Row 1: E F G H
     for (uint32_t c = 0; c < 4; ++c)
-        buf.active_row(1)[c] = grid_cell{static_cast<char32_t>(U'E' + c), {}, {}, cell_attr::none};
+        buf.active_row(1)[c] = grid_cell{static_cast<char32_t>(U'E' + c), {}, {}, cell_kind::normal, cell_attr::none};
     // Row 2 (newest): I J K L
     for (uint32_t c = 0; c < 4; ++c)
-        buf.active_row(2)[c] = grid_cell{static_cast<char32_t>(U'I' + c), {}, {}, cell_attr::none};
+        buf.active_row(2)[c] = grid_cell{static_cast<char32_t>(U'I' + c), {}, {}, cell_kind::normal, cell_attr::none};
 
     // Resize to 1 col, 1 row. 3 old rows x 4 chunks = 12, capacity = 2.
     // Only newest ~2 chunks survive -> newest row's first cells.
