@@ -47,6 +47,16 @@ struct shell {
 
   [[nodiscard]] auto native_handle() const noexcept -> shell_handle;
 
+  // --- Queries ------------------------------------------------------------
+
+  [[nodiscard]] auto is_running() const -> bool;
+  [[nodiscard]] auto read_output() -> std::string;
+
+  // --- I/O & resize -------------------------------------------------------
+
+  auto write_input(std::string_view data) -> std::expected<void, std::error_code>;
+  auto resize(uint32_t cols, uint32_t rows) -> std::expected<void, std::error_code>;
+
 private:
   struct empty_tag {};
   explicit shell(empty_tag) noexcept;
@@ -55,12 +65,6 @@ private:
 
   friend auto make_shell(shell_settings const& settings)
     -> std::expected<shell, std::error_code>;
-  friend auto is_shell_running(shell const& sh) -> bool;
-  friend auto read_shell_output_raw(shell& sh) -> std::string;
-  friend auto write_shell_input(shell& sh, std::string_view data)
-    -> std::expected<void, std::error_code>;
-  friend auto resize_shell(shell& sh, uint32_t cols, uint32_t rows)
-    -> std::expected<void, std::error_code>;
 };
 
 // Create a ConPTY shell (PowerShell).
@@ -68,20 +72,6 @@ private:
 [[nodiscard]] auto make_shell(shell_settings const& settings)
   -> std::expected<shell, std::error_code>;
 
-// Check whether the shell process is still running.
-[[nodiscard]] auto is_shell_running(shell const& sh) -> bool;
 
-// Read raw output from the shell.
-// Returns a string of bytes as produced by ConPTY (including VT/ANSI escape
-// sequences).  Empty string means no data ready.
-[[nodiscard]] auto read_shell_output_raw(shell& sh) -> std::string;
-
-// Send input bytes to the shell's input pipe.
-auto write_shell_input(shell& sh, std::string_view data)
-  -> std::expected<void, std::error_code>;
-
-// Resize the ConPTY terminal to the given dimensions.
-auto resize_shell(shell& sh, uint32_t cols, uint32_t rows)
-  -> std::expected<void, std::error_code>;
 
 } // namespace betty::platform

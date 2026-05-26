@@ -62,9 +62,8 @@ struct terminal_color {
   }
 };
 
-// Sentinel constructors for "default" colours.
-constexpr auto default_fg() -> terminal_color { return {0, 0, 0, terminal_color::k_default_flag}; }
-constexpr auto default_bg() -> terminal_color { return {0, 0, 0, terminal_color::k_default_flag}; }
+// Sentinel for "use the terminal's default colour" (fg or bg).
+constexpr auto default_color() -> terminal_color { return {0, 0, 0, terminal_color::k_default_flag}; }
 
 // ===========================================================================
 // Catppuccin Mocha ANSI palette (16 standard colours)
@@ -112,8 +111,8 @@ constexpr auto xterm_256_color(uint8_t index) -> terminal_color {
 
 struct grid_cell {
   char32_t codepoint = U' ';         // default: space
-  terminal_color fg = default_fg();  // foreground colour
-  terminal_color bg = default_bg();  // background colour
+  terminal_color fg = default_color();  // foreground colour
+  terminal_color bg = default_color();  // background colour
   cell_kind kind = cell_kind::normal;  // structural cell type
   cell_attr attr = cell_attr::none;    // text attributes (bold, italic, etc.)
 };

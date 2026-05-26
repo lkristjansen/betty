@@ -240,12 +240,12 @@ void vt_parser::dispatch_sgr() {
 
     // --- Default colours ------------------------------------------------
     if (n == sgr::fg_default) {
-      output_.push_back(action{action_type::sgr_set_fg, default_fg()});
+      output_.push_back(action{action_type::sgr_set_fg, default_color()});
       ++i;
       continue;
     }
     if (n == sgr::bg_default) {
-      output_.push_back(action{action_type::sgr_set_bg, default_bg()});
+      output_.push_back(action{action_type::sgr_set_bg, default_color()});
       ++i;
       continue;
     }

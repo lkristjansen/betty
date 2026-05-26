@@ -8,8 +8,8 @@ namespace betty::terminal {
 // ===========================================================================
 
 struct sgr_state {
-  terminal_color fg = default_fg();
-  terminal_color bg = default_bg();
+  terminal_color fg = default_color();
+  terminal_color bg = default_color();
   cell_attr attr = cell_attr::none;
 };
 

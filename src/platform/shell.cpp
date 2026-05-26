@@ -265,46 +265,46 @@ auto make_shell(shell_settings const& settings)
 }
 
 // ===========================================================================
-// is_shell_running
+// is_running
 // ===========================================================================
 
-auto is_shell_running(shell const& sh) -> bool {
-  if (!sh.impl_ || !sh.impl_->process) {
+auto shell::is_running() const -> bool {
+  if (!impl_ || !impl_->process) {
     return false;
   }
   // Poll the process handle directly — more accurate than a flag that
   // the read thread can set to false for unrelated I/O errors.
-  return WaitForSingleObject(sh.impl_->process.get(), 0) != WAIT_OBJECT_0;
+  return WaitForSingleObject(impl_->process.get(), 0) != WAIT_OBJECT_0;
 }
 
 // ===========================================================================
-// read_shell_output_raw
+// read_output
 // ===========================================================================
 
-auto read_shell_output_raw(shell& sh) -> std::string {
-  if (!sh.impl_) return {};
+auto shell::read_output() -> std::string {
+  if (!impl_) return {};
 
   std::string result;
   {
-    std::lock_guard<std::mutex> lock(sh.impl_->output_mutex);
-    result = std::move(sh.impl_->raw_buffer);
-    sh.impl_->raw_buffer.clear();
+    std::lock_guard<std::mutex> lock(impl_->output_mutex);
+    result = std::move(impl_->raw_buffer);
+    impl_->raw_buffer.clear();
   }
   return result;
 }
 
 // ===========================================================================
-// write_shell_input
+// write_input
 // ===========================================================================
 
-auto write_shell_input(shell& sh, std::string_view data)
+auto shell::write_input(std::string_view data)
   -> std::expected<void, std::error_code> {
 
-  if (!sh.impl_ || !sh.impl_->input_pipe)
+  if (!impl_ || !impl_->input_pipe)
     return std::unexpected(make_win32_error(ERROR_INVALID_HANDLE));
 
   DWORD written = 0;
-  if (!WriteFile(sh.impl_->input_pipe.get(), data.data(),
+  if (!WriteFile(impl_->input_pipe.get(), data.data(),
                   static_cast<DWORD>(data.size()), &written, nullptr))
     return std::unexpected(make_win32_error());
 
@@ -312,16 +312,16 @@ auto write_shell_input(shell& sh, std::string_view data)
 }
 
 // ===========================================================================
-// resize_shell
+// resize
 // ===========================================================================
 
-auto resize_shell(shell& sh, uint32_t cols, uint32_t rows)
+auto shell::resize(uint32_t cols, uint32_t rows)
   -> std::expected<void, std::error_code> {
-  if (!sh.impl_ || !sh.impl_->hpc)
+  if (!impl_ || !impl_->hpc)
     return std::unexpected(make_win32_error(ERROR_INVALID_HANDLE));
 
   COORD size{ static_cast<SHORT>(cols), static_cast<SHORT>(rows) };
-  HRESULT hr = ResizePseudoConsole(sh.impl_->hpc.get(), size);
+  HRESULT hr = ResizePseudoConsole(impl_->hpc.get(), size);
   if (FAILED(hr))
     return std::unexpected(make_hresult_error(hr));
   return {};

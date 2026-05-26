@@ -11,8 +11,8 @@ namespace {
 [[nodiscard]] auto read_from_live_shell(
     std::optional<platform::shell>& shell) -> std::optional<std::string> {
   return shell.and_then([](platform::shell& s) -> std::optional<std::string> {
-    if (!platform::is_shell_running(s)) return std::nullopt;
-    return platform::read_shell_output_raw(s);
+    if (!s.is_running()) return std::nullopt;
+    return s.read_output();
   });
 }
 
@@ -74,12 +74,12 @@ void terminal_session::write_keyboard(platform::vk_code vk, bool ctrl,
   }
 
   // ── Normal shell input ───────────────────────────────────────────────
-  if (!shell_ || !platform::is_shell_running(*shell_)) return;
+  if (!shell_ || !shell_->is_running()) return;
   if (shell_input_failed_) return;
 
   std::string bytes = input_.on_keydown(vk, ctrl, shift, alt);
   if (!bytes.empty()) {
-    if (auto res = platform::write_shell_input(*shell_, bytes); !res) {
+    if (auto res = shell_->write_input( bytes); !res) {
       util::log_error(res.error(), "write shell input");
       shell_input_failed_ = true;
     }
@@ -91,12 +91,12 @@ void terminal_session::write_keyboard(platform::vk_code vk, bool ctrl,
 // ===========================================================================
 
 void terminal_session::write_char(uint32_t codepoint) {
-  if (!shell_ || !platform::is_shell_running(*shell_)) return;
+  if (!shell_ || !shell_->is_running()) return;
   if (shell_input_failed_) return;
 
   std::string bytes = util::utf8_encode(codepoint);
   if (!bytes.empty()) {
-    if (auto res = platform::write_shell_input(*shell_, bytes); !res) {
+    if (auto res = shell_->write_input( bytes); !res) {
       util::log_error(res.error(), "write shell char input");
       shell_input_failed_ = true;
     }
@@ -117,7 +117,7 @@ auto terminal_session::process_output() -> session_status {
   }
 
   // Shell exists but dead.
-  if (shell_ && !platform::is_shell_running(*shell_)) {
+  if (shell_ && !shell_->is_running()) {
     if (!exit_notified_) {
       feed_bytes("[shell exited]\r\n");
       exit_notified_ = true;
@@ -125,7 +125,7 @@ auto terminal_session::process_output() -> session_status {
       return session_status::dead;
     }
     // Drain remaining output.
-    std::string raw = platform::read_shell_output_raw(*shell_);
+    std::string raw = shell_->read_output();
     if (!raw.empty()) {
       feed_bytes(raw);
     }
@@ -141,10 +141,10 @@ auto terminal_session::process_output() -> session_status {
 // ===========================================================================
 
 void terminal_session::shutdown() {
-  if (!shell_ || !platform::is_shell_running(*shell_)) return;
+  if (!shell_ || !shell_->is_running()) return;
 
   constexpr std::string_view exit_cmd = "exit\r\n";
-  if (auto res = platform::write_shell_input(*shell_, exit_cmd); !res) {
+  if (auto res = shell_->write_input( exit_cmd); !res) {
     util::log_error(res.error(), "send exit command to shell");
   }
 }
@@ -166,8 +166,8 @@ void terminal_session::resize(uint32_t cols, uint32_t rows) {
 
   grid_.resize(cols, rows);
 
-  if (shell_ && platform::is_shell_running(*shell_)) {
-    (void)platform::resize_shell(*shell_, cols, rows)
+  if (shell_ && shell_->is_running()) {
+    (void)shell_->resize( cols, rows)
         .or_else([](std::error_code const& ec) -> std::expected<void, std::error_code> {
           util::log_error(ec, "resize shell");
           return {};
