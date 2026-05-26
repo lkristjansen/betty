@@ -37,18 +37,14 @@ public:
   // --- Resize ---------------------------------------------------------------
 
   // Handle a window resize: recreate swap chain buffers and update the
-  // renderer's constant buffer.  On swap chain failure the RTV becomes empty
-  // and is_valid() returns false.  Dimension update failure is logged and
-  // swallowed.
-  void handle_resize(uint32_t width, uint32_t height);
+  // renderer's constant buffer.  Returns an error if either operation fails.
+  [[nodiscard]] auto handle_resize(uint32_t width, uint32_t height)
+      -> std::expected<void, std::error_code>;
 
   // --- Queries --------------------------------------------------------------
 
   [[nodiscard]] auto cell_width() const -> uint32_t;
   [[nodiscard]] auto cell_height() const -> uint32_t;
-
-  // Returns false when the RTV is empty (e.g. after a failed resize).
-  [[nodiscard]] auto is_valid() const -> bool;
 
   // --- Move-only ------------------------------------------------------------
 

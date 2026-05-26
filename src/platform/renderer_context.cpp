@@ -44,26 +44,25 @@ auto renderer_context::end_frame() const -> std::expected<void, std::error_code>
 // Resize
 // ===========================================================================
 
-void renderer_context::handle_resize(uint32_t width, uint32_t height) {
-  if (width == 0 || height == 0) return;
+auto renderer_context::handle_resize(uint32_t width, uint32_t height)
+    -> std::expected<void, std::error_code> {
+  if (width == 0 || height == 0) return {};
 
   window_dimensions const new_dims{width, height};
 
   // Resize swap chain → new RTV.
   auto new_rtv = resize_swap_chain(device_, swap_chain_, std::move(rtv_), new_dims);
-  if (new_rtv) {
-    rtv_ = std::move(*new_rtv);
-  } else {
-    util::log_error(new_rtv.error(), "resize swap chain");
-    return;  // rtv_ is now empty; is_valid() returns false.
+  if (!new_rtv) {
+    return std::unexpected(new_rtv.error());
   }
+  rtv_ = std::move(*new_rtv);
 
   // Update renderer constant buffer.
-  (void)renderer_.update_dimensions(device_, new_dims)
-      .or_else([](std::error_code const& ec) -> std::expected<void, std::error_code> {
-        util::log_error(ec, "update renderer dimensions");
-        return {};
-      });
+  auto dims_result = renderer_.update_dimensions(device_, new_dims);
+  if (!dims_result) {
+    return std::unexpected(dims_result.error());
+  }
+  return {};
 }
 
 // ===========================================================================
@@ -78,9 +77,7 @@ auto renderer_context::cell_height() const -> uint32_t {
   return renderer_.cell_height();
 }
 
-auto renderer_context::is_valid() const -> bool {
-  return static_cast<bool>(rtv_);
-}
+
 
 // ===========================================================================
 // Factory

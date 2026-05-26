@@ -45,11 +45,15 @@ void application::on_resize(uint32_t width, uint32_t height, bool completed) {
   // Ignore zero-area resize (minimized window).
   if (width == 0 || height == 0) return;
 
-  renderer_ctx_.handle_resize(width, height);
+  auto resize_result = renderer_ctx_.handle_resize(width, height);
+  if (!resize_result) {
+    fatal_error_ = resize_result.error();
+    return;
+  }
 
   // Only on completed resize: recompute terminal dimensions and resize
   // the session (grid + shell).
-  if (completed && renderer_ctx_.is_valid()) {
+  if (completed) {
     uint32_t const cell_w = renderer_ctx_.cell_width();
     uint32_t const cell_h = renderer_ctx_.cell_height();
     uint32_t const pad = platform::k_padding_px;
@@ -96,11 +100,9 @@ int application::run() {
   // Message loop.
   int exit_code = 0;
   while (platform::dispatch_pending_messages()) {
-    // Guard: if a failed resize left the RTV empty, exit cleanly.
-    if (!renderer_ctx_.is_valid()) {
-      util::log_error(
-          std::make_error_code(std::errc::io_error),
-          "RTV was invalidated by a failed resize, exiting");
+    // Guard: if a resize failure was detected, exit with the real error.
+    if (fatal_error_) {
+      util::show_fatal_error(*fatal_error_, "resize renderer");
       exit_code = 1;
       break;
     }
