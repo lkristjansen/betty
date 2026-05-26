@@ -1069,10 +1069,12 @@ auto glyph_renderer::draw_text(d3d_device const& device,
 auto glyph_renderer::draw_grid(d3d_device const& device,
                                 d3d_render_target_view const& rtv,
                                 std::span<const render_cell> cells,
-                                size2d dims, point2d cursor) const
+                                size2d dims, point2d cursor, uint32_t padding) const
   -> std::expected<void, std::error_code> {
 
   auto* context = device.impl_->context.Get();
+
+  float const pad = static_cast<float>(padding);
 
   // Clamp to the actual window dimensions.
   uint32_t const max_cols = impl_->window_width / impl_->cell_width;
@@ -1133,7 +1135,7 @@ auto glyph_renderer::draw_grid(d3d_device const& device,
       cursor.row < draw_rows && cursor.col < draw_cols;
 
   for (uint32_t row = 0; row < draw_rows; ++row) {
-    float const y0 = static_cast<float>(row * impl_->cell_height);
+    float const y0 = pad + static_cast<float>(row * impl_->cell_height);
     float const y1 = y0 + static_cast<float>(impl_->cell_height);
 
     for (uint32_t col = 0; col < draw_cols && quad_count < k_max_glyphs_per_frame; ) {
@@ -1150,7 +1152,7 @@ auto glyph_renderer::draw_grid(d3d_device const& device,
 
       bool const is_wide = (cell.attr & k_attr_wide) != 0;
       float const glyph_cell_width = is_wide ? k_wide_cell_factor : k_normal_cell_factor;
-      float const x0 = static_cast<float>(col * impl_->cell_width);
+      float const x0 = pad + static_cast<float>(col * impl_->cell_width);
       float const x1 = x0 + glyph_cell_width * static_cast<float>(impl_->cell_width);
 
       bool const is_cursor =

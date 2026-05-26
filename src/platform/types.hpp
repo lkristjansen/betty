@@ -114,6 +114,9 @@ struct window_dimensions {
 // Default window size.
 inline constexpr window_dimensions default_window_size{ 960u, 600u };
 
+// Uniform padding inside the terminal window (px on each side).
+inline constexpr uint32_t k_padding_px = 8;
+
 // Catppuccin Mocha base colour (#1e1e2e).
 inline constexpr rgba_color mocha_base = rgba_from_rgb(30, 30, 46);
 

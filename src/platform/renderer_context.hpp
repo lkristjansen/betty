@@ -28,7 +28,7 @@ public:
   // `cursor` specifies which cell to render with reverse video; pass
   // out-of-bounds row/col to suppress the cursor.
   [[nodiscard]] auto draw_grid(std::span<render_cell const> cells,
-                               size2d dims, point2d cursor) const
+                               size2d dims, point2d cursor, uint32_t padding) const
       -> std::expected<void, std::error_code>;
 
   // Present the back buffer.  Returns an error on device loss.

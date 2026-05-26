@@ -28,12 +28,12 @@ void renderer_context::begin_frame(rgba_color const& clear_color) const {
 }
 
 auto renderer_context::draw_grid(std::span<render_cell const> cells,
-                                  size2d dims, point2d cursor) const
+                                  size2d dims, point2d cursor, uint32_t padding) const
     -> std::expected<void, std::error_code> {
   if (cells.empty()) return {};
 
   renderer_.prepare_unicode_glyphs(device_, cells);
-  return renderer_.draw_grid(device_, rtv_, cells, dims, cursor);
+  return renderer_.draw_grid(device_, rtv_, cells, dims, cursor, padding);
 }
 
 auto renderer_context::end_frame() const -> std::expected<void, std::error_code> {

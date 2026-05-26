@@ -50,9 +50,10 @@ void application::on_resize(uint32_t width, uint32_t height, bool completed) {
   if (completed && renderer_ctx_.is_valid()) {
     uint32_t const cell_w = renderer_ctx_.cell_width();
     uint32_t const cell_h = renderer_ctx_.cell_height();
+    uint32_t const pad = platform::k_padding_px;
 
-    uint32_t const new_cols = std::max(k_min_columns, width / cell_w);
-    uint32_t const new_rows = std::max(k_min_rows, height / cell_h);
+    uint32_t const new_cols = std::max(k_min_columns, (width - 2 * pad) / cell_w);
+    uint32_t const new_rows = std::max(k_min_rows, (height - 2 * pad) / cell_h);
 
     if (new_cols != session_.cols() || new_rows != session_.rows()) {
       session_.resize(new_cols, new_rows);
@@ -114,7 +115,7 @@ int application::run() {
         session_.is_following_output() ? session_.cursor_row() : session_.rows(),
         session_.is_following_output() ? session_.cursor_col() : session_.cols()
       };
-      if (auto draw_result = renderer_ctx_.draw_grid(cells, dims, cursor);
+      if (auto draw_result = renderer_ctx_.draw_grid(cells, dims, cursor, platform::k_padding_px);
           !draw_result) {
         util::log_error(draw_result.error(), "draw grid");
         exit_code = 1;
@@ -159,11 +160,12 @@ auto make_application() -> std::expected<application, std::error_code> {
   }
   auto renderer_ctx = std::move(*renderer_ctx_result);
 
-  // 3. Compute initial terminal dimensions.
+  // 3. Compute initial terminal dimensions (accounting for padding).
   uint32_t const cell_w = renderer_ctx.cell_width();
   uint32_t const cell_h = renderer_ctx.cell_height();
-  uint32_t const cols = platform::default_window_size.width / cell_w;
-  uint32_t const rows = platform::default_window_size.height / cell_h;
+  uint32_t const pad = platform::k_padding_px;
+  uint32_t const cols = (platform::default_window_size.width - 2 * pad) / cell_w;
+  uint32_t const rows = (platform::default_window_size.height - 2 * pad) / cell_h;
 
   // 4. Create shell (non-fatal: app runs without shell if it fails).
   std::optional<platform::shell> shell;
@@ -177,9 +179,9 @@ auto make_application() -> std::expected<application, std::error_code> {
     util::show_fatal_error(shell_result.error(), "Failed to create shell process");
   }
 
-  // 5. Set minimum window size.
-  uint32_t const min_win_width  = k_min_columns * cell_w;
-  uint32_t const min_win_height = k_min_rows * cell_h;
+  // 5. Set minimum window size with padding accounted for.
+  uint32_t const min_win_width  = k_min_columns * cell_w + 2 * pad;
+  uint32_t const min_win_height = k_min_rows * cell_h + 2 * pad;
   platform::set_min_window_size(window, min_win_width, min_win_height);
 
   // 6. Create terminal session.

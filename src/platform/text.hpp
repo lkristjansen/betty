@@ -59,9 +59,10 @@ struct glyph_renderer {
   // `cursor` specifies which cell to render with reverse video
   // (foreground/background swapped).  Pass values outside the visible area to
   // suppress the cursor (it will not be drawn).
+  // `padding` offsets the grid origin from the top-left corner in pixels.
   [[nodiscard]] auto draw_grid(d3d_device const& device, d3d_render_target_view const& rtv,
                                 std::span<const render_cell> cells,
-                                size2d dims, point2d cursor) const
+                                size2d dims, point2d cursor, uint32_t padding) const
       -> std::expected<void, std::error_code>;
 
   ~glyph_renderer();
