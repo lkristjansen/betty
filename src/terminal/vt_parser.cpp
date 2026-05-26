@@ -1,4 +1,6 @@
 #include "vt_parser.hpp"
+#include <algorithm>
+#include <array>
 #include <cassert>
 #include <charconv>
 #include <string_view>
@@ -39,6 +41,46 @@ namespace sgr {
 } // anonymous namespace
 
 namespace betty::terminal {
+
+namespace {
+
+// Table-driven SGR attribute rules (code → on/off bits).
+struct sgr_attr_rule {
+  uint32_t code;
+  uint8_t  on_bits;
+  uint8_t  off_bits;
+};
+
+// Table-driven SGR range rules (palette colours).
+struct sgr_range_rule {
+  uint32_t    lo, hi;
+  action_type type;
+  uint32_t    palette_offset;
+  uint32_t    param_base;
+};
+
+constexpr std::array<sgr_attr_rule, 11> sgr_attr_rules = {{
+  {sgr::bold_on,           to_uint8(cell_attr::bold),          to_uint8(cell_attr::faint)},
+  {sgr::faint_on,          to_uint8(cell_attr::faint),         to_uint8(cell_attr::bold)},
+  {sgr::italic_on,         to_uint8(cell_attr::italic),        0},
+  {sgr::underline_on,      to_uint8(cell_attr::underline),     0},
+  {sgr::reverse_on,        to_uint8(cell_attr::reverse),       0},
+  {sgr::strikethrough_on,  to_uint8(cell_attr::strikethrough), 0},
+  {sgr::bold_faint_off,    0,                                  to_uint8(cell_attr::bold) | to_uint8(cell_attr::faint)},
+  {sgr::italic_off,        0,                                  to_uint8(cell_attr::italic)},
+  {sgr::underline_off,     0,                                  to_uint8(cell_attr::underline)},
+  {sgr::reverse_off,       0,                                  to_uint8(cell_attr::reverse)},
+  {sgr::strikethrough_off, 0,                                  to_uint8(cell_attr::strikethrough)},
+}};
+
+constexpr std::array<sgr_range_rule, 4> sgr_range_rules = {{
+  {sgr::fg_palette_lo, sgr::fg_palette_hi, action_type::sgr_set_fg, 0, sgr::fg_palette_lo},
+  {sgr::bg_palette_lo, sgr::bg_palette_hi, action_type::sgr_set_bg, 0, sgr::bg_palette_lo},
+  {sgr::fg_bright_lo,  sgr::fg_bright_hi,  action_type::sgr_set_fg, 8, sgr::fg_bright_lo},
+  {sgr::bg_bright_lo,  sgr::bg_bright_hi,  action_type::sgr_set_bg, 8, sgr::bg_bright_lo},
+}};
+
+} // anonymous namespace
 
 // ===========================================================================
 // utf8_decoder
@@ -159,78 +201,57 @@ void vt_parser::dispatch_sgr() {
   while (i < params.size()) {
     uint32_t const n = params[i];
 
+    // --- Reset ----------------------------------------------------------
     if (n == sgr::reset) {
       output_.push_back(action{action_type::sgr_reset, std::monostate{}});
       ++i;
-    } else if (n >= sgr::fg_palette_lo && n <= sgr::fg_palette_hi) {
-      output_.push_back(action{action_type::sgr_set_fg,
-                               catppuccin_palette[n - sgr::fg_palette_lo]});
+      continue;
+    }
+
+    // --- Palette range rules --------------------------------------------
+    auto range_it = std::ranges::find_if(sgr_range_rules,
+        [n](sgr_range_rule const& r) { return n >= r.lo && n <= r.hi; });
+    if (range_it != sgr_range_rules.end()) {
+      auto const idx = (n - range_it->param_base) + range_it->palette_offset;
+      output_.push_back(action{range_it->type, catppuccin_palette[idx]});
       ++i;
-    } else if (n >= sgr::bg_palette_lo && n <= sgr::bg_palette_hi) {
-      output_.push_back(action{action_type::sgr_set_bg,
-                               catppuccin_palette[n - sgr::bg_palette_lo]});
+      continue;
+    }
+
+    // --- Attribute on/off rules -----------------------------------------
+    auto attr_it = std::ranges::find_if(sgr_attr_rules,
+        [n](sgr_attr_rule const& r) { return r.code == n; });
+    if (attr_it != sgr_attr_rules.end()) {
+      pending_on  |= attr_it->on_bits;
+      pending_off |= attr_it->off_bits;
       ++i;
-    } else if (n >= sgr::fg_bright_lo && n <= sgr::fg_bright_hi) {
-      output_.push_back(action{action_type::sgr_set_fg,
-                               catppuccin_palette[(n - sgr::fg_bright_lo) + 8]});
-      ++i;
-    } else if (n >= sgr::bg_bright_lo && n <= sgr::bg_bright_hi) {
-      output_.push_back(action{action_type::sgr_set_bg,
-                               catppuccin_palette[(n - sgr::bg_bright_lo) + 8]});
-      ++i;
-    } else if (n == sgr::fg_extended) {
+      continue;
+    }
+
+    // --- Extended colours (consume multiple params) ---------------------
+    if (n == sgr::fg_extended) {
       i += dispatch_sgr_extended(params, i, false);
-    } else if (n == sgr::bg_extended) {
+      continue;
+    }
+    if (n == sgr::bg_extended) {
       i += dispatch_sgr_extended(params, i, true);
-    } else if (n == sgr::fg_default) {
+      continue;
+    }
+
+    // --- Default colours ------------------------------------------------
+    if (n == sgr::fg_default) {
       output_.push_back(action{action_type::sgr_set_fg, default_fg()});
       ++i;
-    } else if (n == sgr::bg_default) {
+      continue;
+    }
+    if (n == sgr::bg_default) {
       output_.push_back(action{action_type::sgr_set_bg, default_bg()});
       ++i;
-    } else if (n == sgr::bold_on) {
-      // Bold on — also clears faint (mutually exclusive).
-      pending_on  |= to_uint8(cell_attr::bold);
-      pending_off |= to_uint8(cell_attr::faint);
-      ++i;
-    } else if (n == sgr::faint_on) {
-      // Faint on — also clears bold.
-      pending_on  |= to_uint8(cell_attr::faint);
-      pending_off |= to_uint8(cell_attr::bold);
-      ++i;
-    } else if (n == sgr::italic_on) {
-      pending_on |= to_uint8(cell_attr::italic);
-      ++i;
-    } else if (n == sgr::underline_on) {
-      pending_on |= to_uint8(cell_attr::underline);
-      ++i;
-    } else if (n == sgr::reverse_on) {
-      pending_on |= to_uint8(cell_attr::reverse);
-      ++i;
-    } else if (n == sgr::strikethrough_on) {
-      pending_on |= to_uint8(cell_attr::strikethrough);
-      ++i;
-    } else if (n == sgr::bold_faint_off) {
-      // Normal intensity — clears both bold and faint.
-      pending_off |= to_uint8(cell_attr::bold);
-      pending_off |= to_uint8(cell_attr::faint);
-      ++i;
-    } else if (n == sgr::italic_off) {
-      pending_off |= to_uint8(cell_attr::italic);
-      ++i;
-    } else if (n == sgr::underline_off) {
-      pending_off |= to_uint8(cell_attr::underline);
-      ++i;
-    } else if (n == sgr::reverse_off) {
-      pending_off |= to_uint8(cell_attr::reverse);
-      ++i;
-    } else if (n == sgr::strikethrough_off) {
-      pending_off |= to_uint8(cell_attr::strikethrough);
-      ++i;
-    } else {
-      // Other SGR (5,6,8,21,25,28, etc.) — silently ignore.
-      ++i;
+      continue;
     }
+
+    // --- Unknown --------------------------------------------------------
+    ++i;
   }
 
   // Emit accumulated attribute changes.
@@ -288,35 +309,35 @@ void vt_parser::dispatch_el() {
 
 void vt_parser::dispatch_il() {
   auto const params = split_params();
-  uint32_t const count = (params.size() > 0 && params[0] > 0) ? params[0] : 1;
+  uint32_t const count = (params[0] > 0) ? params[0] : 1;
   output_.push_back(action{action_type::insert_lines,
                            uint32_t{count}});
 }
 
 void vt_parser::dispatch_dl() {
   auto const params = split_params();
-  uint32_t const count = (params.size() > 0 && params[0] > 0) ? params[0] : 1;
+  uint32_t const count = (params[0] > 0) ? params[0] : 1;
   output_.push_back(action{action_type::delete_lines,
                            uint32_t{count}});
 }
 
 void vt_parser::dispatch_su() {
   auto const params = split_params();
-  uint32_t const count = (params.size() > 0 && params[0] > 0) ? params[0] : 1;
+  uint32_t const count = (params[0] > 0) ? params[0] : 1;
   output_.push_back(action{action_type::scroll_up_page,
                            uint32_t{count}});
 }
 
 void vt_parser::dispatch_sd() {
   auto const params = split_params();
-  uint32_t const count = (params.size() > 0 && params[0] > 0) ? params[0] : 1;
+  uint32_t const count = (params[0] > 0) ? params[0] : 1;
   output_.push_back(action{action_type::scroll_down_page,
                            uint32_t{count}});
 }
 
 void vt_parser::dispatch_decstbm() {
   auto const params = split_params();
-  uint32_t const top = (params.size() > 0) ? params[0] : 1;
+  uint32_t const top = params[0];
   uint32_t const bottom = (params.size() > 1) ? params[1] : 0;
   output_.push_back(action{action_type::set_scroll_region,
                            cursor_pos{top, bottom}});
@@ -324,21 +345,21 @@ void vt_parser::dispatch_decstbm() {
 
 void vt_parser::dispatch_ich() {
   auto const params = split_params();
-  uint32_t const count = (params.size() > 0 && params[0] > 0) ? params[0] : 1;
+  uint32_t const count = (params[0] > 0) ? params[0] : 1;
   output_.push_back(action{action_type::insert_chars,
                            uint32_t{count}});
 }
 
 void vt_parser::dispatch_dch() {
   auto const params = split_params();
-  uint32_t const count = (params.size() > 0 && params[0] > 0) ? params[0] : 1;
+  uint32_t const count = (params[0] > 0) ? params[0] : 1;
   output_.push_back(action{action_type::delete_chars,
                            uint32_t{count}});
 }
 
 void vt_parser::dispatch_ech() {
   auto const params = split_params();
-  uint32_t const count = (params.size() > 0 && params[0] > 0) ? params[0] : 1;
+  uint32_t const count = (params[0] > 0) ? params[0] : 1;
   output_.push_back(action{action_type::erase_chars,
                            uint32_t{count}});
 }
@@ -346,7 +367,7 @@ void vt_parser::dispatch_ech() {
 void vt_parser::dispatch_cursor(char const final_byte) {
   auto const params = split_params();
   // ANSI default for cursor params: missing or 0 → 1.
-  auto const p1 = (params.size() > 0 && params[0] != 0) ? params[0] : 1u;
+  auto const p1 = (params[0] != 0) ? params[0] : 1u;
   auto const p2 = (params.size() > 1 && params[1] != 0) ? params[1] : 1u;
 
   switch (final_byte) {

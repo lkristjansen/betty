@@ -28,7 +28,19 @@ terminal_session::terminal_session(uint32_t cols, uint32_t rows,
     , shell_(std::move(shell))
     , input_() {
   if (!shell_) {
-    grid_.write_bytes("Failed to create shell process.\r\n");
+    feed_bytes("Failed to create shell process.\r\n");
+  }
+}
+
+// ===========================================================================
+// feed_bytes
+// ===========================================================================
+
+void terminal_session::feed_bytes(std::string_view data) {
+  for (unsigned char const b : data) {
+    for (auto const& a : parser_.parse(b)) {
+      grid_.apply(a);
+    }
   }
 }
 
@@ -99,7 +111,7 @@ auto terminal_session::process_output() -> session_status {
   // Shell is alive: read and process output.
   if (auto raw = read_from_live_shell(shell_)) {
     if (!raw->empty()) {
-      grid_.write_bytes(*raw);
+      feed_bytes(*raw);
     }
     return session_status::ok;
   }
@@ -107,7 +119,7 @@ auto terminal_session::process_output() -> session_status {
   // Shell exists but dead.
   if (shell_ && !platform::is_shell_running(*shell_)) {
     if (!exit_notified_) {
-      grid_.write_bytes("[shell exited]\r\n");
+      feed_bytes("[shell exited]\r\n");
       exit_notified_ = true;
       if (on_exited_) on_exited_();
       return session_status::dead;
@@ -115,13 +127,26 @@ auto terminal_session::process_output() -> session_status {
     // Drain remaining output.
     std::string raw = platform::read_shell_output_raw(*shell_);
     if (!raw.empty()) {
-      grid_.write_bytes(raw);
+      feed_bytes(raw);
     }
     return session_status::dead;
   }
 
   // No shell at all.
   return session_status::ok;
+}
+
+// ===========================================================================
+// shutdown
+// ===========================================================================
+
+void terminal_session::shutdown() {
+  if (!shell_ || !platform::is_shell_running(*shell_)) return;
+
+  constexpr std::string_view exit_cmd = "exit\r\n";
+  if (auto res = platform::write_shell_input(*shell_, exit_cmd); !res) {
+    util::log_error(res.error(), "send exit command to shell");
+  }
 }
 
 // ===========================================================================

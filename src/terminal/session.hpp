@@ -9,6 +9,7 @@
 #include "input_handler.hpp"
 #include "platform/shell.hpp"
 #include "platform/types.hpp"
+#include "vt_parser.hpp"
 
 namespace betty::terminal {
 
@@ -51,6 +52,10 @@ public:
   // on subsequent calls (still draining remaining output).
   [[nodiscard]] auto process_output() -> session_status;
 
+  // Send an exit command to the shell to initiate graceful shutdown.
+  // Must be called before the session is destroyed.
+  void shutdown();
+
   // --- Scrollback -----------------------------------------------------------
 
   void scroll_viewport(int32_t delta);
@@ -80,9 +85,12 @@ public:
   void on_exited(std::function<void()> callback);
 
 private:
+  // Feed raw bytes through the VT parser and apply resulting actions to the grid.
+  void feed_bytes(std::string_view data);
   terminal_grid grid_;
   std::optional<platform::shell> shell_;
   input_handler input_;
+  vt_parser parser_;
   bool shell_input_failed_ = false;
   bool exit_notified_ = false;
   std::function<void()> on_exited_;

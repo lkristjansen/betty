@@ -94,7 +94,7 @@ auto make_renderer_context(win32_window const& window)
   auto device = std::move(*device_result);
 
   // 2. Query client area dimensions.
-  auto const size = get_client_size(window);
+  auto const size = window.get_client_size();
 
   // 3. Create swap chain.
   auto swap_chain_result = make_swap_chain(

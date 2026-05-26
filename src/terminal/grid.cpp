@@ -160,18 +160,6 @@ void terminal_grid::write_combining_char(char32_t cp) {
 }
 
 // ===========================================================================
-// write_bytes — feed bytes to VT parser, apply resulting actions
-// ===========================================================================
-
-void terminal_grid::write_bytes(std::string_view data) {
-  for (unsigned char const b : data) {
-    for (auto const& a : parser_.parse(b)) {
-      apply(a);
-    }
-  }
-}
-
-// ===========================================================================
 // apply — dispatch a single action to the grid
 // ===========================================================================
 

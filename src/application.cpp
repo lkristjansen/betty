@@ -73,19 +73,19 @@ void application::on_resize(uint32_t width, uint32_t height, bool completed) {
 
 int application::run() {
   // Keyboard callback (WM_KEYDOWN — non-printable keys, Ctrl+letter).
-  platform::set_key_callback(window_,
+  window_.set_key_callback(
     [this](platform::vk_code vk, bool ctrl, bool shift, bool alt) {
       on_key(vk, ctrl, shift, alt);
     });
 
   // Character callback (WM_CHAR — printable Unicode, layout-translated).
-  platform::set_char_callback(window_,
+  window_.set_char_callback(
     [this](uint32_t codepoint) {
       on_char(codepoint);
     });
 
   // Resize callback.
-  platform::set_resize_callback(window_,
+  window_.set_resize_callback(
     [this](uint32_t width, uint32_t height, bool completed) {
       on_resize(width, height, completed);
     });
@@ -94,12 +94,12 @@ int application::run() {
   // (not in the constructor) because `this` must refer to the final,
   // post-move address of the application.
   session_.set_observer([this](std::string_view title) {
-    platform::set_window_title(window_, title);
+    window_.set_window_title(title);
   });
 
   // Restore default window title when the shell exits.
   session_.on_exited([this] {
-    platform::set_window_title(window_, "betty");
+    window_.set_window_title("betty");
   });
 
   // Message loop.
@@ -139,6 +139,9 @@ int application::run() {
       break;
     }
   }
+
+  // Send exit command to the shell before it is destroyed.
+  session_.shutdown();
 
   // shell_ goes out of scope via terminal_session destruction.
   return exit_code;
@@ -192,7 +195,7 @@ auto make_application() -> std::expected<application, std::error_code> {
   // 5. Set minimum window size with padding accounted for.
   uint32_t const min_win_width  = k_min_columns * cell_w + 2 * pad;
   uint32_t const min_win_height = k_min_rows * cell_h + 2 * pad;
-  platform::set_min_window_size(window, min_win_width, min_win_height);
+  window.set_min_window_size(min_win_width, min_win_height);
 
   // 6. Create terminal session.
   terminal::terminal_session session(cols, rows, std::move(shell));

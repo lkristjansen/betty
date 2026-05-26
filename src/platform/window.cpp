@@ -52,8 +52,8 @@ auto map_vk(WPARAM wParam) -> vk_code {
 }
 
 // Retrieve the callbacks pointer from an HWND.
-auto get_callbacks(HWND hwnd) -> detail::window_callbacks* {
-  auto ptr = reinterpret_cast<detail::window_callbacks*>(
+auto get_state(HWND hwnd) -> detail::window_state* {
+  auto ptr = reinterpret_cast<detail::window_state*>(
     GetWindowLongPtrW(hwnd, GWLP_USERDATA));
   return ptr;
 }
@@ -72,25 +72,25 @@ LRESULT CALLBACK WndProc(HWND hwnd, UINT msg, WPARAM wParam, LPARAM lParam) {
     return 0;
 
   case WM_KEYDOWN: {
-    if (auto* cbs = get_callbacks(hwnd)) {
-      if (cbs->on_key) {
+    if (auto* state = get_state(hwnd)) {
+      if (state->callbacks.on_key) {
         auto vk = map_vk(wParam);
         bool const ctrl  = (GetKeyState(VK_CONTROL) & 0x8000) != 0;
         bool const shift = (GetKeyState(VK_SHIFT)   & 0x8000) != 0;
         bool const alt   = (GetKeyState(VK_MENU)    & 0x8000) != 0;
-        cbs->on_key(vk, ctrl, shift, alt);
+        state->callbacks.on_key(vk, ctrl, shift, alt);
       }
     }
     return 0;
   }
 
   case WM_CHAR: {
-    if (auto* cbs = get_callbacks(hwnd)) {
-      if (cbs->on_char) {
+    if (auto* state = get_state(hwnd)) {
+      if (state->callbacks.on_char) {
         // WM_CHAR gives us the translated Unicode codepoint.
         // Skip control characters (they're handled via WM_KEYDOWN).
         if (wParam >= 0x20) {
-          cbs->on_char(static_cast<uint32_t>(wParam));
+          state->callbacks.on_char(static_cast<uint32_t>(wParam));
         }
       }
     }
@@ -98,28 +98,28 @@ LRESULT CALLBACK WndProc(HWND hwnd, UINT msg, WPARAM wParam, LPARAM lParam) {
   }
 
   case WM_SIZE: {
-    if (auto* cbs = get_callbacks(hwnd)) {
-      if (cbs->on_resize) {
+    if (auto* state = get_state(hwnd)) {
+      if (state->callbacks.on_resize) {
         uint32_t const width  = static_cast<uint32_t>(LOWORD(lParam));
         uint32_t const height = static_cast<uint32_t>(HIWORD(lParam));
         // WM_EXITSIZEMOVE is only sent for drag-resize.  For maximize/restore
         // we treat WM_SIZE itself as the completed resize.
         bool const completed =
             (wParam == SIZE_MAXIMIZED || wParam == SIZE_RESTORED);
-        cbs->on_resize(width, height, completed);
+        state->callbacks.on_resize(width, height, completed);
       }
     }
     return 0;
   }
 
   case WM_EXITSIZEMOVE: {
-    if (auto* cbs = get_callbacks(hwnd)) {
-      if (cbs->on_resize) {
+    if (auto* state = get_state(hwnd)) {
+      if (state->callbacks.on_resize) {
         RECT rect{};
         if (GetClientRect(hwnd, &rect)) {
           uint32_t const width  = static_cast<uint32_t>(rect.right - rect.left);
           uint32_t const height = static_cast<uint32_t>(rect.bottom - rect.top);
-          cbs->on_resize(width, height, true);
+          state->callbacks.on_resize(width, height, true);
         }
       }
     }
@@ -127,12 +127,12 @@ LRESULT CALLBACK WndProc(HWND hwnd, UINT msg, WPARAM wParam, LPARAM lParam) {
   }
 
   case WM_GETMINMAXINFO: {
-    if (auto* cbs = get_callbacks(hwnd)) {
+    if (auto* state = get_state(hwnd)) {
       auto* mmi = reinterpret_cast<MINMAXINFO*>(lParam);
-      if (cbs->min_client_width > 0 && cbs->min_client_height > 0) {
+      if (state->min_client_width > 0 && state->min_client_height > 0) {
         RECT rect{0, 0,
-                  static_cast<LONG>(cbs->min_client_width),
-                  static_cast<LONG>(cbs->min_client_height)};
+                  static_cast<LONG>(state->min_client_width),
+                  static_cast<LONG>(state->min_client_height)};
         DWORD const style =
             static_cast<DWORD>(GetWindowLongPtrW(hwnd, GWL_STYLE));
         if (AdjustWindowRectEx(&rect, style, FALSE, 0)) {
@@ -149,22 +149,20 @@ LRESULT CALLBACK WndProc(HWND hwnd, UINT msg, WPARAM wParam, LPARAM lParam) {
   }
 }
 
-// UTF-8 → UTF-16 converter with error reporting.
-auto widen(std::string_view sv) -> std::wstring {
-  if (sv.empty()) return {};
+// UTF-8 → UTF-16 converter.
+auto widen(std::string_view sv) -> std::expected<std::wstring, std::error_code> {
+  if (sv.empty()) return std::wstring{};
   int needed = MultiByteToWideChar(CP_UTF8, 0, sv.data(),
                                     static_cast<int>(sv.size()), nullptr, 0);
   if (needed <= 0) {
-    // Invalid UTF-8 input — return a hardcoded fallback.
-    return L"<invalid UTF-8>";
+    return std::unexpected(make_win32_error());
   }
   std::wstring result(needed, L'\0');
   int converted = MultiByteToWideChar(CP_UTF8, 0, sv.data(),
                                        static_cast<int>(sv.size()), result.data(), needed);
   if (converted <= 0) {
-    return L"<conversion error>";
+    return std::unexpected(make_win32_error());
   }
-  // MultiByteToWideChar includes the null terminator in `needed`.
   result.resize(static_cast<size_t>(converted));
   return result;
 }
@@ -185,7 +183,7 @@ win32_window::~win32_window() {
 
 win32_window::win32_window(win32_window&& other) noexcept
   : handle_(other.handle_)
-  , callbacks_(std::move(other.callbacks_)) {
+  , state_(std::move(other.state_)) {
   other.handle_ = nullptr;
 }
 
@@ -196,7 +194,7 @@ win32_window& win32_window::operator=(win32_window&& other) noexcept {
     }
     handle_ = other.handle_;
     other.handle_ = nullptr;
-    callbacks_ = std::move(other.callbacks_);
+    state_ = std::move(other.state_);
   }
   return *this;
 }
@@ -209,8 +207,13 @@ auto make_window(window_settings const& settings)
   HINSTANCE hInstance = GetModuleHandleW(nullptr);
 
   // Widen UTF-8 strings to UTF-16 — must outlive the WNDCLASSEXW and CreateWindowExW calls.
-  auto const wide_class_name = widen(settings.class_name);
-  auto const wide_title = widen(settings.title);
+  auto wide_class_name_result = widen(settings.class_name);
+  if (!wide_class_name_result) return std::unexpected(wide_class_name_result.error());
+  auto const& wide_class_name = *wide_class_name_result;
+
+  auto wide_title_result = widen(settings.title);
+  if (!wide_title_result) return std::unexpected(wide_title_result.error());
+  auto const& wide_title = *wide_title_result;
 
   // 1. Register window class
   WNDCLASSEXW wc{};
@@ -266,11 +269,11 @@ auto make_window(window_settings const& settings)
 
   win32_window result{ win32_window::empty_tag{} };
   result.handle_ = hwnd;
-  result.callbacks_ = std::make_unique<detail::window_callbacks>();
+  result.state_ = std::make_unique<detail::window_state>();
 
   // 5. Store the callbacks pointer via GWLP_USERDATA so WndProc can reach it.
   SetWindowLongPtrW(hwnd, GWLP_USERDATA,
-    reinterpret_cast<LONG_PTR>(result.callbacks_.get()));
+    reinterpret_cast<LONG_PTR>(result.state_.get()));
 
   return result;
 }
@@ -292,53 +295,55 @@ auto dispatch_pending_messages() -> bool {
 // --- show_error_message ----------------------------------------------------
 
 auto show_error_message(std::string_view title, std::string_view message) -> void {
-  auto const wide_title = widen(title);
-  auto const wide_message = widen(message);
+  auto wide_title_result = widen(title);
+  auto const& wide_title = wide_title_result ? *wide_title_result : std::wstring{};
+  auto wide_message_result = widen(message);
+  auto const& wide_message = wide_message_result ? *wide_message_result : std::wstring{};
   MessageBoxW(nullptr, wide_message.c_str(), wide_title.c_str(),
               MB_OK | MB_ICONERROR);
 }
 
 // --- set_window_title ------------------------------------------------------
 
-auto set_window_title(win32_window& window, std::string_view title) -> void {
-  auto const wide_title = widen(title);
-  SetWindowTextW(static_cast<HWND>(window.handle_), wide_title.c_str());
+auto win32_window::set_window_title(std::string_view title) -> void {
+  auto wide_title_result = widen(title);
+  if (!wide_title_result) return;  // silently ignore malformed UTF-8
+  SetWindowTextW(static_cast<HWND>(handle_), wide_title_result->c_str());
 }
 
 // --- set_key_callback / set_char_callback ----------------------------------
 
-auto set_key_callback(win32_window& window, std::function<void(vk_code, bool ctrl, bool shift, bool alt)> cb) -> void {
-  if (window.callbacks_) {
-    window.callbacks_->on_key = std::move(cb);
+auto win32_window::set_key_callback(std::function<void(vk_code, bool ctrl, bool shift, bool alt)> cb) -> void {
+  if (state_) {
+    state_->callbacks.on_key = std::move(cb);
   }
 }
 
-auto set_char_callback(win32_window& window, std::function<void(uint32_t codepoint)> cb) -> void {
-  if (window.callbacks_) {
-    window.callbacks_->on_char = std::move(cb);
+auto win32_window::set_char_callback(std::function<void(uint32_t codepoint)> cb) -> void {
+  if (state_) {
+    state_->callbacks.on_char = std::move(cb);
   }
 }
 
-auto set_resize_callback(win32_window& window,
+auto win32_window::set_resize_callback(
     std::function<void(uint32_t width, uint32_t height, bool completed)> cb) -> void {
-  if (window.callbacks_) {
-    window.callbacks_->on_resize = std::move(cb);
+  if (state_) {
+    state_->callbacks.on_resize = std::move(cb);
   }
 }
 
-auto set_min_window_size(win32_window& window,
-    uint32_t client_width, uint32_t client_height) -> void {
-  if (window.callbacks_) {
-    window.callbacks_->min_client_width  = client_width;
-    window.callbacks_->min_client_height = client_height;
+auto win32_window::set_min_window_size(uint32_t client_width, uint32_t client_height) -> void {
+  if (state_) {
+    state_->min_client_width  = client_width;
+    state_->min_client_height = client_height;
   }
 }
 
 // --- get_client_size -------------------------------------------------------
 
-auto get_client_size(win32_window const& window) -> window_dimensions {
+auto win32_window::get_client_size() const -> window_dimensions {
   RECT rect{};
-  if (GetClientRect(static_cast<HWND>(window.as_hwnd()), &rect)) {
+  if (GetClientRect(static_cast<HWND>(as_hwnd()), &rect)) {
     return {
       static_cast<uint32_t>(rect.right - rect.left),
       static_cast<uint32_t>(rect.bottom - rect.top)

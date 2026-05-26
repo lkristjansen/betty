@@ -41,10 +41,6 @@ public:
   // auto-wrap at column boundary, and scroll at bottom row.
   void write_char(char32_t cp);
 
-  // Process a sequence of raw bytes (VT-stripped shell output).
-  // Internally feeds bytes through vt_parser and applies resulting actions.
-  void write_bytes(std::string_view data);
-
   // Apply a single parsed action to the grid.
   void apply(action const& a);
 
@@ -140,7 +136,6 @@ private:
   scrollback_buffer buffer_;
   cursor_state cursor_;
   sgr_state sgr_;
-  vt_parser parser_;
 
   // Cache of resolved render_cell values for the platform renderer.
   mutable std::vector<platform::render_cell> render_cache_;

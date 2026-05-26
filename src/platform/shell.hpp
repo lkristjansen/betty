@@ -34,9 +34,10 @@ private:
     -> std::expected<shell, std::error_code>;
 };
 
-// Move-only shell handle.  On destruction, sends "exit\r\n" to the child
-// process, waits briefly for graceful shutdown, then releases all resources
-// (ConPTY, pipes, read thread).
+// Move-only shell handle.  On destruction, waits briefly for the child
+// process to exit (force-terminating if needed), then releases all resources
+// (ConPTY, pipes, read thread).  The caller should send any shutdown command
+// before destroying the shell.
 struct shell {
   ~shell();
   shell(shell&&) noexcept;

@@ -87,24 +87,18 @@ shell::~shell() {
   if (!impl_) return;
   auto* p = impl_.get();
 
-  // 1. Send exit command to give the shell a chance to terminate gracefully.
-  if (p->input_pipe) {
-    DWORD written = 0;
-    const char exit_cmd[] = "exit\r\n";
-    WriteFile(p->input_pipe.get(), exit_cmd, static_cast<DWORD>(sizeof(exit_cmd) - 1), &written, nullptr);
-  }
-
-  // 2. Wait for process to exit (2 second timeout),
-  //    then forcefully terminate if it didn't.
+  // 1. Wait for the process to exit (2 second timeout).
+  //    The caller is expected to have sent an exit command before
+  //    destroying the shell; this is a safety net in case it didn't.
   if (p->process) {
     if (WaitForSingleObject(p->process.get(), k_process_exit_timeout_ms) != WAIT_OBJECT_0)
       TerminateProcess(p->process.get(), 1);
   }
 
-  // 3. Shut down the read thread gracefully before destroying shell_impl.
+  // 2. Shut down the read thread gracefully before destroying shell_impl.
   p->shutdown();
 
-  // 4. impl_ is destroyed here.  shell_impl's =default destructor joins
+  // 3. impl_ is destroyed here.  shell_impl's =default destructor joins
   //    the jthread and closes all remaining handles.
 }
 shell::shell(shell&&) noexcept = default;
@@ -293,7 +287,8 @@ auto read_shell_output_raw(shell& sh) -> std::string {
   std::string result;
   {
     std::lock_guard<std::mutex> lock(sh.impl_->output_mutex);
-    result.swap(sh.impl_->raw_buffer);
+    result = std::move(sh.impl_->raw_buffer);
+    sh.impl_->raw_buffer.clear();
   }
   return result;
 }

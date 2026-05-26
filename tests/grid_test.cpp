@@ -1,8 +1,19 @@
 #include <catch2/catch_test_macros.hpp>
 #include "terminal/grid.hpp"
+#include "terminal/vt_parser.hpp"
 #include "terminal/wcwidth.hpp"
 
 using namespace betty::terminal;
+
+// Helper: feed raw bytes through a VT parser and apply actions to the grid.
+static void write_bytes(terminal_grid& g, std::string_view data) {
+  vt_parser p;
+  for (unsigned char const b : data) {
+    for (auto const& a : p.parse(b)) {
+      g.apply(a);
+    }
+  }
+}
 
 // ===========================================================================
 // Construction and basic properties
@@ -151,7 +162,7 @@ TEST_CASE("Grid — pending-wrap: \\r\\n after auto-wrap does not double-advance
     g.write_char(U'c');  // (0,2) → auto-wrap to (1,0), pending_wrap_=true
 
     // Now simulate \r\n from the shell.
-    g.write_bytes("\r\n");
+    write_bytes(g, "\r\n");
 
     // Cursor should be at (1,0), NOT (2,0).
     CHECK(g.cursor_row() == 1);
@@ -198,7 +209,7 @@ TEST_CASE("Grid — pending-wrap: \\r\\n without prior auto-wrap advances normal
     terminal_grid g(3, 3);
     g.write_char(U'a');  // (0,0) → (0,1)
     // No auto-wrap triggered.
-    g.write_bytes("\r\n");
+    write_bytes(g, "\r\n");
     // Should advance to (1,0) normally.
     CHECK(g.cursor_row() == 1);
     CHECK(g.cursor_col() == 0);
@@ -207,13 +218,13 @@ TEST_CASE("Grid — pending-wrap: \\r\\n without prior auto-wrap advances normal
 TEST_CASE("Grid — pending-wrap: cursor movement clears flag", "[grid][pending_wrap]") {
     terminal_grid g(5, 5);
     // Trigger auto-wrap.
-    g.write_bytes("ABCDE");  // fills row 0, auto-wraps to (1,0)
+    write_bytes(g, "ABCDE");  // fills row 0, auto-wraps to (1,0)
 
     // Now move cursor via escape sequence — should clear pending_wrap_.
-    g.write_bytes("\x1B[3;3H");  // CUP to row 3, col 3 (0-based: 2,2)
+    write_bytes(g, "\x1B[3;3H");  // CUP to row 3, col 3 (0-based: 2,2)
 
     // Then \r\n should work normally (not be consumed).
-    g.write_bytes("\r\n");
+    write_bytes(g, "\r\n");
     CHECK(g.cursor_row() == 3);
     CHECK(g.cursor_col() == 0);
 }
@@ -292,7 +303,7 @@ TEST_CASE("Grid — cell() returns full cell data", "[grid][access]") {
 
 TEST_CASE("Grid — write_bytes processes simple text", "[grid][write_bytes]") {
     terminal_grid g(10, 5);
-    g.write_bytes("Hello");
+    write_bytes(g, "Hello");
     CHECK(g.cell(0, 0).codepoint == U'H');
     CHECK(g.cell(0, 1).codepoint == U'e');
     CHECK(g.cell(0, 2).codepoint == U'l');
@@ -302,7 +313,7 @@ TEST_CASE("Grid — write_bytes processes simple text", "[grid][write_bytes]") {
 
 TEST_CASE("Grid — write_bytes handles newline", "[grid][write_bytes]") {
     terminal_grid g(10, 5);
-    g.write_bytes("AB\nCD");
+    write_bytes(g, "AB\nCD");
     CHECK(g.cell(0, 0).codepoint == U'A');
     CHECK(g.cell(0, 1).codepoint == U'B');
     CHECK(g.cell(1, 0).codepoint == U'C');
@@ -311,7 +322,7 @@ TEST_CASE("Grid — write_bytes handles newline", "[grid][write_bytes]") {
 
 TEST_CASE("Grid — write_bytes handles carriage_return", "[grid][write_bytes]") {
     terminal_grid g(10, 5);
-    g.write_bytes("AB\rC");
+    write_bytes(g, "AB\rC");
     CHECK(g.cell(0, 0).codepoint == U'C');  // overwrote A
     CHECK(g.cell(0, 1).codepoint == U'B');
 }
@@ -495,14 +506,14 @@ TEST_CASE("Grid — restore_cursor clamps to grid bounds", "[grid][cursor_save_r
 TEST_CASE("Grid — save/restore via write_bytes (ESC 7 / ESC 8 integration)", "[grid][cursor_save_restore][integration]") {
     terminal_grid g(10, 10);
     // Move to (5, 7) then save.
-    g.write_bytes("\x1B[6;8H");  // CUP: row 6, col 8 → 0-based (5, 7)
-    g.write_bytes("\x1B" "7");   // DECSC
+    write_bytes(g, "\x1B[6;8H");  // CUP: row 6, col 8 → 0-based (5, 7)
+    write_bytes(g, "\x1B" "7");   // DECSC
 
     // Move elsewhere.
-    g.write_bytes("\x1B[3;3H");  // CUP: (2, 2)
+    write_bytes(g, "\x1B[3;3H");  // CUP: (2, 2)
 
     // Restore.
-    g.write_bytes("\x1B" "8");   // DECRC
+    write_bytes(g, "\x1B" "8");   // DECRC
 
     CHECK(g.cursor_row() == 5);
     CHECK(g.cursor_col() == 7);
@@ -604,7 +615,7 @@ TEST_CASE("Grid — resize to zero", "[grid][resize][edge]") {
 TEST_CASE("Grid — resize preserves SGR colours", "[grid][resize]") {
     terminal_grid g(4, 2);
     // Set row 0 to red text on blue background.
-    g.write_bytes("\x1B[31m\x1B[44m");  // SGR red fg, blue bg
+    write_bytes(g, "\x1B[31m\x1B[44m");  // SGR red fg, blue bg
     g.write_char(U'A');
     g.write_char(U'B');
     // Grow columns from 4 to 8.
@@ -685,10 +696,10 @@ TEST_CASE("Grid — resize truncates rows beyond copy_rows", "[grid][resize]") {
     // avoid auto-wrap-scroll corrupting the test).
     terminal_grid g(3, 5);
     // Place each row via CUP + exactly 3 characters (no auto-wrap trigger).
-    g.write_bytes("\x1B[1;1H");  g.write_bytes("aaa");
-    g.write_bytes("\x1B[2;1H");  g.write_bytes("bbb");
-    g.write_bytes("\x1B[3;1H");  g.write_bytes("ccc");
-    g.write_bytes("\x1B[4;1H");  g.write_bytes("ddd");
+    write_bytes(g, "\x1B[1;1H");  write_bytes(g, "aaa");
+    write_bytes(g, "\x1B[2;1H");  write_bytes(g, "bbb");
+    write_bytes(g, "\x1B[3;1H");  write_bytes(g, "ccc");
+    write_bytes(g, "\x1B[4;1H");  write_bytes(g, "ddd");
     // Shrink to 2 rows.
     g.resize(3, 2);
     CHECK(g.rows() == 2);
@@ -705,7 +716,7 @@ TEST_CASE("Grid — write after resize works correctly", "[grid][resize]") {
     terminal_grid g(5, 3);
     g.resize(10, 5);
     // Write to a position that was outside the old grid.
-    g.write_bytes("\x1B[3;8H");  // CUP to (2, 7)
+    write_bytes(g, "\x1B[3;8H");  // CUP to (2, 7)
     g.write_char(U'X');
     CHECK(g.cell(2, 7).codepoint == U'X');
     // Cursor should advance correctly.
@@ -740,7 +751,7 @@ TEST_CASE("Grid — resize preserves render_cells output", "[grid][resize]") {
 
 TEST_CASE("Grid — write_bytes with CUP positions cursor", "[grid][integration]") {
     terminal_grid g(10, 10);
-    g.write_bytes("\x1B[5;8H");
+    write_bytes(g, "\x1B[5;8H");
     // 0-based: row 4, col 7
     CHECK(g.cursor_row() == 4);
     CHECK(g.cursor_col() == 7);
@@ -749,14 +760,14 @@ TEST_CASE("Grid — write_bytes with CUP positions cursor", "[grid][integration]
 TEST_CASE("Grid — write_bytes with CUU/CUD/CUF/CUB", "[grid][integration]") {
     terminal_grid g(10, 10);
     // Start at (5,5)
-    g.write_bytes("\x1B[6;6H");  // 0-based: (5,5)
-    g.write_bytes("\x1B[2A");    // CUU 2 → row 3
+    write_bytes(g, "\x1B[6;6H");  // 0-based: (5,5)
+    write_bytes(g, "\x1B[2A");    // CUU 2 → row 3
     CHECK(g.cursor_row() == 3);
-    g.write_bytes("\x1B[4B");    // CUD 4 → row 7
+    write_bytes(g, "\x1B[4B");    // CUD 4 → row 7
     CHECK(g.cursor_row() == 7);
-    g.write_bytes("\x1B[3C");    // CUF 3 → col 8
+    write_bytes(g, "\x1B[3C");    // CUF 3 → col 8
     CHECK(g.cursor_col() == 8);
-    g.write_bytes("\x1B[5D");    // CUB 5 → col 3
+    write_bytes(g, "\x1B[5D");    // CUB 5 → col 3
     CHECK(g.cursor_col() == 3);
 }
 
@@ -779,9 +790,9 @@ TEST_CASE("Grid — write_char on 0x0 grid does not crash", "[grid][edge]") {
 TEST_CASE("Grid — erase_display mode 0 clears from cursor to end", "[grid][erase]") {
     terminal_grid g(5, 3);
     // Fill rows with 'X' using explicit CUP positioning.
-    g.write_bytes("\x1B[1;1HXXXXX");  // row 0
-    g.write_bytes("\x1B[2;1HXXXXX");  // row 1
-    g.write_bytes("\x1B[3;1HXXXX");   // row 2: 4 X's (skip last to avoid scroll)
+    write_bytes(g, "\x1B[1;1HXXXXX");  // row 0
+    write_bytes(g, "\x1B[2;1HXXXXX");  // row 1
+    write_bytes(g, "\x1B[3;1HXXXX");   // row 2: 4 X's (skip last to avoid scroll)
     // Move to (1,2).
     action mv;
     mv.type = action_type::move_cursor;
@@ -813,9 +824,9 @@ TEST_CASE("Grid — erase_display mode 1 clears from beginning to cursor", "[gri
     terminal_grid g(5, 3);
     // Fill rows with 'X' using explicit CUP positioning to avoid
     // auto-wrap/scroll corrupting the last row.
-    g.write_bytes("\x1B[1;1HXXXXX");  // row 0: 5 X's
-    g.write_bytes("\x1B[2;1HXXXXX");  // row 1: 5 X's
-    g.write_bytes("\x1B[3;1HXXXX");   // row 2: 4 X's (skip last to avoid scroll)
+    write_bytes(g, "\x1B[1;1HXXXXX");  // row 0: 5 X's
+    write_bytes(g, "\x1B[2;1HXXXXX");  // row 1: 5 X's
+    write_bytes(g, "\x1B[3;1HXXXX");   // row 2: 4 X's (skip last to avoid scroll)
 
     // Move cursor to (1, 2).
     action mv;
@@ -843,9 +854,9 @@ TEST_CASE("Grid — erase_display mode 1 clears from beginning to cursor", "[gri
 TEST_CASE("Grid — erase_display mode 2 clears entire screen", "[grid][erase]") {
     terminal_grid g(5, 3);
     // Fill with 'X' using CUP + write_bytes.
-    g.write_bytes("\x1B[1;1HXXXXX");
-    g.write_bytes("\x1B[2;1HXXXXX");
-    g.write_bytes("\x1B[3;1HXXXXX");
+    write_bytes(g, "\x1B[1;1HXXXXX");
+    write_bytes(g, "\x1B[2;1HXXXXX");
+    write_bytes(g, "\x1B[3;1HXXXXX");
 
     action ed;
     ed.type = action_type::erase_display;
@@ -942,8 +953,8 @@ TEST_CASE("Grid — erase_line mode 2 clears entire line", "[grid][erase]") {
     terminal_grid g(5, 3);
     // Fill row 1 with 'X' using write_bytes (explicit positioning avoids
     // auto-wrap moving the cursor off the row).
-    g.write_bytes("\x1B[2;1H");  // CUP to row 2, col 1 (0-based: 1, 0)
-    g.write_bytes("XXXXX");
+    write_bytes(g, "\x1B[2;1H");  // CUP to row 2, col 1 (0-based: 1, 0)
+    write_bytes(g, "XXXXX");
     // Cursor is now at (1,5) → auto-wrapped to (2,0). Move back to row 1.
     action mv;
     mv.type = action_type::move_cursor;
@@ -1004,8 +1015,8 @@ TEST_CASE("Grid — erase_line on zero-size grid does not crash", "[grid][erase]
 TEST_CASE("Grid — erase_display mode 3 treated as mode 2", "[grid][erase]") {
     terminal_grid g(3, 2);
     // Fill with 'X' using CUP.
-    g.write_bytes("\x1B[1;1HXXX");
-    g.write_bytes("\x1B[2;1HXXX");
+    write_bytes(g, "\x1B[1;1HXXX");
+    write_bytes(g, "\x1B[2;1HXXX");
 
     action ed;
     ed.type = action_type::erase_display;
@@ -1020,7 +1031,7 @@ TEST_CASE("Grid — erase_display mode 3 treated as mode 2", "[grid][erase]") {
 TEST_CASE("Grid — erase uses default colours", "[grid][erase]") {
     terminal_grid g(5, 3);
     // Set a cell with non-default colours via SGR, then erase.
-    g.write_bytes("\x1B[31m");  // SGR red fg
+    write_bytes(g, "\x1B[31m");  // SGR red fg
     g.write_char(U'Y');           // at (0,0) with red fg
 
     // Move back to (0,0) and erase the line.
@@ -1044,12 +1055,12 @@ TEST_CASE("Grid — erase uses default colours", "[grid][erase]") {
 TEST_CASE("Grid — erase_display via write_bytes (integration)", "[grid][erase][integration]") {
     terminal_grid g(5, 3);
     // Fill with 'X' using CUP.
-    g.write_bytes("\x1B[1;1HXXXXX");
-    g.write_bytes("\x1B[2;1HXXXXX");
-    g.write_bytes("\x1B[3;1HXXXX");   // 4 X's to avoid scroll
+    write_bytes(g, "\x1B[1;1HXXXXX");
+    write_bytes(g, "\x1B[2;1HXXXXX");
+    write_bytes(g, "\x1B[3;1HXXXX");   // 4 X's to avoid scroll
     // Move to (1, 2) and erase from cursor to end via escape sequence.
-    g.write_bytes("\x1B[2;3H");   // CUP to row 2, col 3 (0-based: 1, 2)
-    g.write_bytes("\x1B[0J");     // ED mode 0
+    write_bytes(g, "\x1B[2;3H");   // CUP to row 2, col 3 (0-based: 1, 2)
+    write_bytes(g, "\x1B[0J");     // ED mode 0
 
     CHECK(g.cell(0, 0).codepoint == U'X');
     CHECK(g.cell(1, 2).codepoint == U' ');
@@ -1063,8 +1074,8 @@ TEST_CASE("Grid — erase_display via write_bytes (integration)", "[grid][erase]
 TEST_CASE("Grid — default scroll region is full screen", "[grid][scroll_region]") {
     terminal_grid g(10, 5);
     // Use CUP to place test content avoiding auto-wrap at the bottom.
-    g.write_bytes("\x1B[1;1H"); g.write_bytes("row0");
-    g.write_bytes("\x1B[5;1H"); g.write_bytes("row4");
+    write_bytes(g, "\x1B[1;1H"); write_bytes(g, "row0");
+    write_bytes(g, "\x1B[5;1H"); write_bytes(g, "row4");
 
     // Cursor ends after "row4" at (4, 4). Move to col 0 of bottom row.
     action mv;
@@ -1092,8 +1103,8 @@ TEST_CASE("Grid — set_scroll_region with valid params", "[grid][scroll_region]
 TEST_CASE("Grid — set_scroll_region top > bottom is ignored", "[grid][scroll_region]") {
     terminal_grid g(10, 10);
     // Fill with 'X' via CUP.
-    g.write_bytes("\x1B[1;1HXXXXXXXXXX");
-    g.write_bytes("\x1B[2;1HYYYYYYYYYY");
+    write_bytes(g, "\x1B[1;1HXXXXXXXXXX");
+    write_bytes(g, "\x1B[2;1HYYYYYYYYYY");
     // Try to set invalid region.
     g.set_scroll_region(8, 3);  // top > bottom — ignored
     // newline at bottom should scroll full screen (default region unchanged).
@@ -1130,7 +1141,7 @@ TEST_CASE("Grid — set_scroll_region bottom > rows clamped", "[grid][scroll_reg
     terminal_grid g(10, 5);
     g.set_scroll_region(1, 999);  // bottom clamped to 5 → region 1-5, cursor home
     // Cursor at (0,0). Write on row 0 via CUP.
-    g.write_bytes("\x1B[1;1H"); g.write_bytes("HEADER");
+    write_bytes(g, "\x1B[1;1H"); write_bytes(g, "HEADER");
     // Move cursor to bottom.
     action mv;
     mv.type = action_type::move_cursor;
@@ -1167,11 +1178,11 @@ TEST_CASE("Grid — set_scroll_region 0;0 resets to full screen", "[grid][scroll
 TEST_CASE("Grid — newline at bottom margin scrolls region, header stays", "[grid][scroll_region][newline]") {
     terminal_grid g(10, 5);
     // Fill with labels using CUP. Write fewer chars to avoid auto-wrap.
-    g.write_bytes("\x1B[1;1H"); g.write_bytes("HDR");
-    g.write_bytes("\x1B[2;1H"); g.write_bytes("r1");
-    g.write_bytes("\x1B[3;1H"); g.write_bytes("r2");
-    g.write_bytes("\x1B[4;1H"); g.write_bytes("r3");
-    g.write_bytes("\x1B[5;1H"); g.write_bytes("r4");
+    write_bytes(g, "\x1B[1;1H"); write_bytes(g, "HDR");
+    write_bytes(g, "\x1B[2;1H"); write_bytes(g, "r1");
+    write_bytes(g, "\x1B[3;1H"); write_bytes(g, "r2");
+    write_bytes(g, "\x1B[4;1H"); write_bytes(g, "r3");
+    write_bytes(g, "\x1B[5;1H"); write_bytes(g, "r4");
 
     // Set scroll region to rows 2-5 (0-based: 1-4).
     g.set_scroll_region(2, 5);
@@ -1221,7 +1232,7 @@ TEST_CASE("Grid — write_char auto-wrap respects scroll region", "[grid][scroll
     // Cursor is at home (0,0).
 
     // Write header row.
-    g.write_bytes("\x1B[1;1H"); g.write_bytes("HDR");  // fills row 0
+    write_bytes(g, "\x1B[1;1H"); write_bytes(g, "HDR");  // fills row 0
 
     // Move to row 1, start writing.
     action mv;
@@ -1247,11 +1258,11 @@ TEST_CASE("Grid — IL inserts blank line at cursor within region", "[grid][il]"
     terminal_grid g(5, 5);
     // Fill with letters using CUP + exactly 4 write_char calls to avoid
     // auto-wrap at the bottom row triggering scroll.
-    g.write_bytes("\x1B[1;1H"); g.write_bytes("AAAA");
-    g.write_bytes("\x1B[2;1H"); g.write_bytes("BBBB");
-    g.write_bytes("\x1B[3;1H"); g.write_bytes("CCCC");
-    g.write_bytes("\x1B[4;1H"); g.write_bytes("DDDD");
-    g.write_bytes("\x1B[5;1H"); g.write_bytes("EEEE");
+    write_bytes(g, "\x1B[1;1H"); write_bytes(g, "AAAA");
+    write_bytes(g, "\x1B[2;1H"); write_bytes(g, "BBBB");
+    write_bytes(g, "\x1B[3;1H"); write_bytes(g, "CCCC");
+    write_bytes(g, "\x1B[4;1H"); write_bytes(g, "DDDD");
+    write_bytes(g, "\x1B[5;1H"); write_bytes(g, "EEEE");
 
     // Move cursor to row 2 (0-based: 1).
     action mv;
@@ -1280,9 +1291,9 @@ TEST_CASE("Grid — IL inserts blank line at cursor within region", "[grid][il]"
 TEST_CASE("Grid — IL count clamped to region boundary", "[grid][il]") {
     terminal_grid g(5, 5);
     // Fill rows 2-4 (0-based: 1-3).
-    g.write_bytes("\x1B[2;1H"); g.write_bytes("BBBBB");
-    g.write_bytes("\x1B[3;1H"); g.write_bytes("CCCCC");
-    g.write_bytes("\x1B[4;1H"); g.write_bytes("DDDDD");
+    write_bytes(g, "\x1B[2;1H"); write_bytes(g, "BBBBB");
+    write_bytes(g, "\x1B[3;1H"); write_bytes(g, "CCCCC");
+    write_bytes(g, "\x1B[4;1H"); write_bytes(g, "DDDDD");
 
     // Set scroll region to rows 2-4 (0-based: 1-3).
     g.set_scroll_region(2, 4);
@@ -1304,8 +1315,8 @@ TEST_CASE("Grid — IL count clamped to region boundary", "[grid][il]") {
 
 TEST_CASE("Grid — IL ignored when cursor outside scroll region (above)", "[grid][il][edge]") {
     terminal_grid g(5, 5);
-    g.write_bytes("\x1B[1;1H"); g.write_bytes("AAAAA");
-    g.write_bytes("\x1B[2;1H"); g.write_bytes("BBBBB");
+    write_bytes(g, "\x1B[1;1H"); write_bytes(g, "AAAAA");
+    write_bytes(g, "\x1B[2;1H"); write_bytes(g, "BBBBB");
 
     // Set scroll region to rows 3-5 (0-based: 2-4).
     g.set_scroll_region(3, 5);
@@ -1321,7 +1332,7 @@ TEST_CASE("Grid — IL ignored when cursor outside scroll region (above)", "[gri
 
 TEST_CASE("Grid — IL ignored when cursor outside scroll region (below)", "[grid][il][edge]") {
     terminal_grid g(5, 5);
-    g.write_bytes("\x1B[1;1H"); g.write_bytes("AAAAA");
+    write_bytes(g, "\x1B[1;1H"); write_bytes(g, "AAAAA");
 
     // Set scroll region to rows 1-2 (0-based: 0-1).
     g.set_scroll_region(1, 2);
@@ -1356,11 +1367,11 @@ TEST_CASE("Grid — IL cursor col resets to 0", "[grid][il]") {
 TEST_CASE("Grid — DL deletes line at cursor within region", "[grid][dl]") {
     terminal_grid g(5, 5);
     // Fill with letters using CUP to avoid auto-wrap at bottom.
-    g.write_bytes("\x1B[1;1H"); g.write_bytes("AAAA");
-    g.write_bytes("\x1B[2;1H"); g.write_bytes("BBBB");
-    g.write_bytes("\x1B[3;1H"); g.write_bytes("CCCC");
-    g.write_bytes("\x1B[4;1H"); g.write_bytes("DDDD");
-    g.write_bytes("\x1B[5;1H"); g.write_bytes("EEEE");
+    write_bytes(g, "\x1B[1;1H"); write_bytes(g, "AAAA");
+    write_bytes(g, "\x1B[2;1H"); write_bytes(g, "BBBB");
+    write_bytes(g, "\x1B[3;1H"); write_bytes(g, "CCCC");
+    write_bytes(g, "\x1B[4;1H"); write_bytes(g, "DDDD");
+    write_bytes(g, "\x1B[5;1H"); write_bytes(g, "EEEE");
 
     // Move cursor to row 1 (0-based).
     action mv;
@@ -1387,8 +1398,8 @@ TEST_CASE("Grid — DL deletes line at cursor within region", "[grid][dl]") {
 
 TEST_CASE("Grid — DL ignored when cursor outside scroll region", "[grid][dl][edge]") {
     terminal_grid g(5, 5);
-    g.write_bytes("\x1B[1;1H"); g.write_bytes("AAAAA");
-    g.write_bytes("\x1B[3;1H"); g.write_bytes("CCCCC");
+    write_bytes(g, "\x1B[1;1H"); write_bytes(g, "AAAAA");
+    write_bytes(g, "\x1B[3;1H"); write_bytes(g, "CCCCC");
 
     // Set scroll region to rows 1-2 (0-based: 0-1).
     g.set_scroll_region(1, 2);
@@ -1423,9 +1434,9 @@ TEST_CASE("Grid — DL cursor col resets to 0", "[grid][dl]") {
 TEST_CASE("Grid — SU full screen pushes to scrollback", "[grid][su]") {
     terminal_grid g(5, 3);
     // Use CUP to avoid auto-wrap at bottom.
-    g.write_bytes("\x1B[1;1H"); g.write_bytes("AAAA");
-    g.write_bytes("\x1B[2;1H"); g.write_bytes("BBBB");
-    g.write_bytes("\x1B[3;1H"); g.write_bytes("CCCC");
+    write_bytes(g, "\x1B[1;1H"); write_bytes(g, "AAAA");
+    write_bytes(g, "\x1B[2;1H"); write_bytes(g, "BBBB");
+    write_bytes(g, "\x1B[3;1H"); write_bytes(g, "CCCC");
 
     g.scroll_page_up(1);
 
@@ -1445,11 +1456,11 @@ TEST_CASE("Grid — SU full screen pushes to scrollback", "[grid][su]") {
 TEST_CASE("Grid — SU sub-region does not affect scrollback", "[grid][su]") {
     terminal_grid g(5, 5);
     // Use CUP to avoid auto-wrap at bottom.
-    g.write_bytes("\x1B[1;1H"); g.write_bytes("AAAA");
-    g.write_bytes("\x1B[2;1H"); g.write_bytes("BBBB");
-    g.write_bytes("\x1B[3;1H"); g.write_bytes("CCCC");
-    g.write_bytes("\x1B[4;1H"); g.write_bytes("DDDD");
-    g.write_bytes("\x1B[5;1H"); g.write_bytes("EEEE");
+    write_bytes(g, "\x1B[1;1H"); write_bytes(g, "AAAA");
+    write_bytes(g, "\x1B[2;1H"); write_bytes(g, "BBBB");
+    write_bytes(g, "\x1B[3;1H"); write_bytes(g, "CCCC");
+    write_bytes(g, "\x1B[4;1H"); write_bytes(g, "DDDD");
+    write_bytes(g, "\x1B[5;1H"); write_bytes(g, "EEEE");
 
     // Set scroll region to rows 2-4 (0-based: 1-3).
     g.set_scroll_region(2, 4);
@@ -1476,9 +1487,9 @@ TEST_CASE("Grid — SU sub-region does not affect scrollback", "[grid][su]") {
 TEST_CASE("Grid — SD full screen inserts blanks at top", "[grid][sd]") {
     terminal_grid g(5, 3);
     // Use CUP to avoid auto-wrap at bottom.
-    g.write_bytes("\x1B[1;1H"); g.write_bytes("AAAA");
-    g.write_bytes("\x1B[2;1H"); g.write_bytes("BBBB");
-    g.write_bytes("\x1B[3;1H"); g.write_bytes("CCCC");
+    write_bytes(g, "\x1B[1;1H"); write_bytes(g, "AAAA");
+    write_bytes(g, "\x1B[2;1H"); write_bytes(g, "BBBB");
+    write_bytes(g, "\x1B[3;1H"); write_bytes(g, "CCCC");
 
     g.scroll_page_down(1);
 
@@ -1494,11 +1505,11 @@ TEST_CASE("Grid — SD full screen inserts blanks at top", "[grid][sd]") {
 TEST_CASE("Grid — SD sub-region does not affect outside rows", "[grid][sd]") {
     terminal_grid g(5, 5);
     // Use CUP to avoid auto-wrap at bottom.
-    g.write_bytes("\x1B[1;1H"); g.write_bytes("AAAA");
-    g.write_bytes("\x1B[2;1H"); g.write_bytes("BBBB");
-    g.write_bytes("\x1B[3;1H"); g.write_bytes("CCCC");
-    g.write_bytes("\x1B[4;1H"); g.write_bytes("DDDD");
-    g.write_bytes("\x1B[5;1H"); g.write_bytes("EEEE");
+    write_bytes(g, "\x1B[1;1H"); write_bytes(g, "AAAA");
+    write_bytes(g, "\x1B[2;1H"); write_bytes(g, "BBBB");
+    write_bytes(g, "\x1B[3;1H"); write_bytes(g, "CCCC");
+    write_bytes(g, "\x1B[4;1H"); write_bytes(g, "DDDD");
+    write_bytes(g, "\x1B[5;1H"); write_bytes(g, "EEEE");
 
     // Set scroll region to rows 2-4 (0-based: 1-3).
     g.set_scroll_region(2, 4);
@@ -1549,16 +1560,16 @@ TEST_CASE("Grid — scroll region preserved across resize", "[grid][scroll_regio
 
 TEST_CASE("Grid — integration DECSTBM + newline via write_bytes", "[grid][scroll_region][integration]") {
     terminal_grid g(10, 8);  // extra rows to avoid auto-wrap issues
-    g.write_bytes("\x1B[1;1H"); g.write_bytes("HEADER");
+    write_bytes(g, "\x1B[1;1H"); write_bytes(g, "HEADER");
     // Set scroll region rows 2-5 (0-based: 1-4)
-    g.write_bytes("\x1B[2;5r");
+    write_bytes(g, "\x1B[2;5r");
     // Cursor should be at home (0,0). Move to row 2 and write.
-    g.write_bytes("\x1B[2;1H");
+    write_bytes(g, "\x1B[2;1H");
     // Fill the scroll region (rows 1-4) with 4 lines of data.
-    g.write_bytes("r1"); g.newline();
-    g.write_bytes("r2"); g.newline();
-    g.write_bytes("r3"); g.newline();
-    g.write_bytes("r4");  // at bottom margin, row 4
+    write_bytes(g, "r1"); g.newline();
+    write_bytes(g, "r2"); g.newline();
+    write_bytes(g, "r3"); g.newline();
+    write_bytes(g, "r4");  // at bottom margin, row 4
     g.newline();           // triggers scroll within region [1,4]
 
     // Header untouched.
@@ -1576,7 +1587,7 @@ TEST_CASE("Grid — integration DECSTBM + newline via write_bytes", "[grid][scro
 TEST_CASE("Grid — ICH inserts blanks and shifts cells right", "[grid][task14][ich]") {
     terminal_grid g(5, 3);
     // Fill row 0 with "ABCDE".
-    g.write_bytes("ABCDE");
+    write_bytes(g, "ABCDE");
 
     // Move cursor to col 1.
     action mv;
@@ -1600,7 +1611,7 @@ TEST_CASE("Grid — ICH inserts blanks and shifts cells right", "[grid][task14][
 
 TEST_CASE("Grid — ICH count clamped to remaining columns", "[grid][task14][ich]") {
     terminal_grid g(5, 3);
-    g.write_bytes("ABCDE");
+    write_bytes(g, "ABCDE");
 
     action mv;
     mv.type = action_type::move_cursor;
@@ -1622,7 +1633,7 @@ TEST_CASE("Grid — ICH count clamped to remaining columns", "[grid][task14][ich
 
 TEST_CASE("Grid — ICH at last column blanks that cell", "[grid][task14][ich]") {
     terminal_grid g(5, 3);
-    g.write_bytes("ABCDE");
+    write_bytes(g, "ABCDE");
 
     action mv;
     mv.type = action_type::move_cursor;
@@ -1668,7 +1679,7 @@ TEST_CASE("Grid — ICH cursor unchanged", "[grid][task14][ich]") {
 TEST_CASE("Grid — DCH deletes cells and shifts left", "[grid][task14][dch]") {
     terminal_grid g(5, 3);
     // Fill row 0 with "ABCDE".
-    g.write_bytes("ABCDE");
+    write_bytes(g, "ABCDE");
 
     // Move cursor to col 1.
     action mv;
@@ -1692,7 +1703,7 @@ TEST_CASE("Grid — DCH deletes cells and shifts left", "[grid][task14][dch]") {
 
 TEST_CASE("Grid — DCH count clamped to remaining columns", "[grid][task14][dch]") {
     terminal_grid g(5, 3);
-    g.write_bytes("ABCDE");
+    write_bytes(g, "ABCDE");
 
     action mv;
     mv.type = action_type::move_cursor;
@@ -1714,7 +1725,7 @@ TEST_CASE("Grid — DCH count clamped to remaining columns", "[grid][task14][dch
 
 TEST_CASE("Grid — DCH at last column blanks that cell", "[grid][task14][dch]") {
     terminal_grid g(5, 3);
-    g.write_bytes("ABCDE");
+    write_bytes(g, "ABCDE");
 
     action mv;
     mv.type = action_type::move_cursor;
@@ -1751,7 +1762,7 @@ TEST_CASE("Grid — DCH cursor unchanged", "[grid][task14][dch]") {
 
 TEST_CASE("Grid — ECH blanks cells in place", "[grid][task14][ech]") {
     terminal_grid g(5, 3);
-    g.write_bytes("ABCDE");
+    write_bytes(g, "ABCDE");
 
     action mv;
     mv.type = action_type::move_cursor;
@@ -1774,7 +1785,7 @@ TEST_CASE("Grid — ECH blanks cells in place", "[grid][task14][ech]") {
 
 TEST_CASE("Grid — ECH count clamped to remaining columns", "[grid][task14][ech]") {
     terminal_grid g(5, 3);
-    g.write_bytes("ABCDE");
+    write_bytes(g, "ABCDE");
 
     action mv;
     mv.type = action_type::move_cursor;
@@ -1877,7 +1888,7 @@ TEST_CASE("Grid — render_cells marks wide and continuation", "[grid][task15][w
 TEST_CASE("Grid — wide char fg/bg colours propagated to both cells", "[grid][task15][wide]") {
     terminal_grid g(10, 5);
     // Set red fg via SGR then write a wide char.
-    g.write_bytes("\x1B[31m");  // red fg
+    write_bytes(g, "\x1B[31m");  // red fg
     g.write_char(0x4E2D);
     // Both cells should have the same fg.
     CHECK(g.cell(0, 0).fg.r == g.cell(0, 1).fg.r);
