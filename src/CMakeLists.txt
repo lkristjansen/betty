@@ -1,9 +1,10 @@
 add_subdirectory(platform)
 add_subdirectory(terminal)
+add_subdirectory(config)
 
 add_executable(betty main.cpp application.cpp util/log.cpp)
 target_include_directories(betty PRIVATE ${CMAKE_CURRENT_SOURCE_DIR})
-target_link_libraries(betty PRIVATE platform terminal)
+target_link_libraries(betty PRIVATE platform terminal config)
 target_compile_features(betty PRIVATE cxx_std_23)
 
 target_compile_options(betty PRIVATE

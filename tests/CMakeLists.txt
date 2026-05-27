@@ -7,11 +7,13 @@ add_executable(betty_tests
     input_handler_test.cpp
     utf8_test.cpp
     shell_test.cpp
+    config_test.cpp
 )
 
 target_link_libraries(betty_tests PRIVATE
     terminal
     platform
+    config
     Catch2::Catch2WithMain
 )
 
