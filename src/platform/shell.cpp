@@ -1,4 +1,5 @@
 #include "shell.hpp"
+#include "unicode.hpp"
 #include "win32_handle.hpp"
 #include <windows.h>
 
@@ -224,11 +225,18 @@ auto make_shell(shell_settings const& settings)
     return std::unexpected(make_win32_error());
   }
 
-  // 6. Spawn PowerShell.
+  // 6. Spawn the shell process.
   // cmd_line is a non-const std::wstring, so .data() returns wchar_t* (not
   // const wchar_t*).  CreateProcessW may modify the command-line buffer in
   // place, so we need a mutable string — this is correct and standards-conformant.
-  std::wstring cmd_line = L"powershell.exe -NoProfile -NoLogo";
+  auto wide_result = widen(settings.command_line);
+  std::wstring cmd_line;
+  if (wide_result) {
+    cmd_line = std::move(*wide_result);
+  } else {
+    util::log_error(wide_result.error(), "widen shell command_line");
+    cmd_line = L"powershell.exe -NoProfile -NoLogo";
+  }
   PROCESS_INFORMATION pi{};
   BOOL created = CreateProcessW(
     nullptr, cmd_line.data(), nullptr, nullptr,

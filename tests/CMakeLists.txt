@@ -6,6 +6,7 @@ add_executable(betty_tests
     grid_test.cpp
     input_handler_test.cpp
     utf8_test.cpp
+    shell_test.cpp
 )
 
 target_link_libraries(betty_tests PRIVATE

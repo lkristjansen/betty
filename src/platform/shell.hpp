@@ -15,8 +15,9 @@ namespace betty::platform {
 // entirely in shell.cpp behind a PIMPL.
 
 struct shell_settings {
-  uint32_t cols;  // initial column count
-  uint32_t rows;  // initial row count
+  uint32_t cols = 120;                                       // initial column count
+  uint32_t rows = 40;                                        // initial row count
+  std::string command_line = "powershell.exe -NoProfile -NoLogo";  // shell command line
 };
 
 // Forward-declared implementation struct (defined in shell.cpp).
