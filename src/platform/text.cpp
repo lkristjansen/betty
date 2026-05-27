@@ -798,7 +798,7 @@ auto make_glyph_renderer(d3d_device const& device, window_dimensions const& wind
   // --- 14. Create sampler state (bilinear, clamp) ---------------------------
   {
     D3D11_SAMPLER_DESC samp_desc{};
-    samp_desc.Filter         = D3D11_FILTER_MIN_MAG_MIP_LINEAR;
+    samp_desc.Filter         = D3D11_FILTER_MIN_MAG_MIP_POINT;
     samp_desc.AddressU       = D3D11_TEXTURE_ADDRESS_CLAMP;
     samp_desc.AddressV       = D3D11_TEXTURE_ADDRESS_CLAMP;
     samp_desc.AddressW       = D3D11_TEXTURE_ADDRESS_CLAMP;
@@ -813,7 +813,7 @@ auto make_glyph_renderer(d3d_device const& device, window_dimensions const& wind
   {
     D3D11_BLEND_DESC blend_desc{};
     blend_desc.RenderTarget[0].BlendEnable   = TRUE;
-    blend_desc.RenderTarget[0].SrcBlend       = D3D11_BLEND_SRC_ALPHA;
+    blend_desc.RenderTarget[0].SrcBlend       = D3D11_BLEND_ONE;
     blend_desc.RenderTarget[0].DestBlend      = D3D11_BLEND_INV_SRC_ALPHA;
     blend_desc.RenderTarget[0].BlendOp        = D3D11_BLEND_OP_ADD;
     blend_desc.RenderTarget[0].SrcBlendAlpha  = D3D11_BLEND_ONE;
