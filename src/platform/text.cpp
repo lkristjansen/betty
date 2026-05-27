@@ -12,6 +12,7 @@
 #include <wrl/client.h>
 
 #include <array>
+#include <cassert>
 #include <cmath>
 #include <cstdint>
 #include <memory>
@@ -74,19 +75,13 @@ static_assert(sizeof(glyph_vertex) == 8 * sizeof(float),
 struct glyph_constants {
   float window_width;
   float window_height;
-  float cell_width;
-  float cell_height;
-  float inv_tex_width;
-  float inv_tex_height;
-  float _pad[2];  // pad to 32 bytes for D3D11 alignment
+  float _pad[2];  // pad to 16 bytes for D3D11 cbuffer alignment
 };
-static_assert(sizeof(glyph_constants) == 32,
-              "glyph_constants must be 32 bytes for D3D11 cbuffer alignment");
+static_assert(sizeof(glyph_constants) == 16,
+              "glyph_constants must be 16 bytes for D3D11 cbuffer alignment");
 
-// Per-glyph slot metadata (atlas position + precomputed UVs).
+// Per-glyph slot metadata (precomputed UVs).
 struct glyph_slot {
-  uint16_t atlas_x;
-  uint16_t atlas_y;
   float    u0, v0;
   float    u1, v1;
 };
@@ -100,8 +95,7 @@ namespace {
 const char* k_vertex_shader_src = R"(
 cbuffer Constants : register(b0) {
   float2 window_size;
-  float2 cell_size;
-  float2 inv_tex_size;
+  float2 _pad;
 };
 
 struct VS_INPUT {
@@ -211,6 +205,8 @@ struct glyph_renderer::impl {
   std::unordered_map<char32_t, uint32_t> dyn_index_;
   // LRU: last-access generation counter per slot.
   std::array<uint64_t, k_dyn_max_glyphs> dyn_access_{};
+  // Reverse map: slot → codepoint (0 = empty). Used for O(1) eviction.
+  std::array<char32_t, k_dyn_max_glyphs> dyn_slot_cp_{};
   uint64_t dyn_clock_ = 0;
   // Next free slot (fills sequentially until full, then LRU eviction).
   uint32_t dyn_next_ = 0;
@@ -241,11 +237,13 @@ glyph_renderer::glyph_renderer(glyph_renderer&&) noexcept = default;
 glyph_renderer& glyph_renderer::operator=(glyph_renderer&&) noexcept = default;
 glyph_renderer::glyph_renderer(empty_tag) noexcept {}
 
-auto glyph_renderer::cell_width() const -> uint32_t {
+auto glyph_renderer::cell_width() const noexcept -> uint32_t {
+  assert(impl_ != nullptr);
   return impl_->cell_width;
 }
 
-auto glyph_renderer::cell_height() const -> uint32_t {
+auto glyph_renderer::cell_height() const noexcept -> uint32_t {
+  assert(impl_ != nullptr);
   return impl_->cell_height;
 }
 
@@ -268,29 +266,35 @@ auto compile_shader(const char* source, const char* entry_point, const char* tar
   return hr;
 }
 
-// Get the font face (v1 interface) and metrics from the text format.
-auto init_font_face(IDWriteFactory* factory, const wchar_t* font_family,
-                    IDWriteTextFormat* format,
-                    uint32_t& cell_width, uint32_t& cell_height,
-                    ComPtr<IDWriteFontFace1>& font_face,
-                    uint32_t& font_ascent, uint32_t& font_design_units_per_em) -> HRESULT {
-  // 1. Get font face via the font collection.
+// Resolve the font family from the text format's font collection.
+// Hoisted out so the family can be reused for both regular and italic faces.
+auto resolve_font_family(IDWriteTextFormat* format,
+                         const wchar_t* font_family_name,
+                         ComPtr<IDWriteFontFamily>& out_family) -> HRESULT {
   ComPtr<IDWriteFontCollection> font_collection;
   HRESULT hr = format->GetFontCollection(font_collection.GetAddressOf());
   if (FAILED(hr)) return hr;
 
   UINT32 family_index = 0;
   BOOL   exists = FALSE;
-  hr = font_collection->FindFamilyName(font_family, &family_index, &exists);
+  hr = font_collection->FindFamilyName(font_family_name, &family_index, &exists);
   if (FAILED(hr)) return hr;
   if (!exists) return E_FAIL;
 
-  ComPtr<IDWriteFontFamily> dw_font_family;
-  hr = font_collection->GetFontFamily(family_index, dw_font_family.GetAddressOf());
-  if (FAILED(hr)) return hr;
+  return font_collection->GetFontFamily(family_index, out_family.GetAddressOf());
+}
 
+// Get the font face (v1 interface) and metrics from the font family.
+// `font_family` should come from resolve_font_family().
+auto init_font_face(IDWriteFactory* factory,
+                    IDWriteFontFamily* font_family,
+                    IDWriteTextFormat* format,
+                    uint32_t& cell_width, uint32_t& cell_height,
+                    ComPtr<IDWriteFontFace1>& font_face,
+                    uint32_t& font_ascent, uint32_t& font_design_units_per_em) -> HRESULT {
+  // 1. Get font face from the family.
   ComPtr<IDWriteFont> font;
-  hr = dw_font_family->GetFont(0, font.GetAddressOf());
+  HRESULT hr = font_family->GetFont(0, font.GetAddressOf());
   if (FAILED(hr)) return hr;
 
   // Get IDWriteFontFace, then query for IDWriteFontFace1.
@@ -366,7 +370,7 @@ auto rasterize_glyph(IDWriteFactory* factory, IDWriteFontFace1* font_face,
     &glyph_run,
     1.0f,                                    // pixelsPerDip
     nullptr,                                 // transform (identity)
-    DWRITE_RENDERING_MODE_CLEARTYPE_NATURAL, // anti-aliased rendering
+    DWRITE_RENDERING_MODE_NATURAL_SYMMETRIC,  // grayscale anti-aliasing
     DWRITE_MEASURING_MODE_NATURAL,
     0.0f, 0.0f,                              // originX, originY
     analysis.GetAddressOf()
@@ -384,16 +388,16 @@ auto rasterize_glyph(IDWriteFactory* factory, IDWriteFontFace1* font_face,
 
   UINT32 const bounds_width  = static_cast<UINT32>(bounds.right - bounds.left);
   UINT32 const bounds_height = static_cast<UINT32>(bounds.bottom - bounds.top);
-  // ClearType texture is 3× wider (R, G, B subpixel channels per pixel).
+  // ClearType texture is 3× wider; NATURAL_SYMMETRIC ensures R=G=B per pixel.
   UINT32 const buffer_size   = bounds_width * bounds_height * 3;
   UINT32 const buffer_stride = bounds_width * 3;
 
-  std::vector<BYTE> cleartype_buffer(buffer_size);
+  std::vector<BYTE> alpha_buffer(buffer_size);
 
   // 6. Create alpha texture.
   hr = analysis->CreateAlphaTexture(DWRITE_TEXTURE_CLEARTYPE_3x1,
                                       &bounds,
-                                      cleartype_buffer.data(),
+                                      alpha_buffer.data(),
                                       buffer_size);
   if (FAILED(hr)) return false;
 
@@ -436,13 +440,10 @@ auto rasterize_glyph(IDWriteFactory* factory, IDWriteFontFace1* font_face,
       if (dx >= slot_right)
         continue;
 
-      // ClearType buffer stores 3 bytes per pixel (R, G, B subpixel coverage).
-      // Average the subpixel channels to get a single coverage value.
+      // ClearType buffer is 3 bytes/pixel; under symmetric rendering all
+      // channels are identical, so reading any one gives the coverage.
       size_t const ct_idx = static_cast<size_t>(by) * buffer_stride + static_cast<size_t>(bx) * 3;
-      uint8_t const r = cleartype_buffer[ct_idx + 0];
-      uint8_t const g = cleartype_buffer[ct_idx + 1];
-      uint8_t const b = cleartype_buffer[ct_idx + 2];
-      uint8_t const alpha = static_cast<uint8_t>((static_cast<uint32_t>(r) + g + b) / 3);
+      uint8_t const alpha = alpha_buffer[ct_idx];
       if (alpha == 0) continue;
 
       // buf_idx: absolute pixel position within the full atlas texture.
@@ -491,15 +492,19 @@ auto make_glyph_renderer(d3d_device const& device,
   if (!wide_family_result) return std::unexpected(wide_family_result.error());
   auto const& wide_family = *wide_family_result;
 
-  // --- 1. Create DWrite factory ---------------------------------------------
+  // --- Create DWrite factory -------------------------------------------------
+  IUnknown* factory_unk = nullptr;
   HRESULT hr = DWriteCreateFactory(
     DWRITE_FACTORY_TYPE_SHARED,
     __uuidof(IDWriteFactory),
-    reinterpret_cast<IUnknown**>(p->dwrite_factory.GetAddressOf())
+    &factory_unk
   );
+  if (SUCCEEDED(hr)) {
+    p->dwrite_factory.Attach(static_cast<IDWriteFactory*>(factory_unk));
+  }
   if (FAILED(hr)) return std::unexpected(make_hresult_error(hr));
 
-  // --- 2. Create text format ------------------------------------------------
+  // --- Create text format ----------------------------------------------------
   hr = p->dwrite_factory->CreateTextFormat(
     wide_family.c_str(), nullptr,
     DWRITE_FONT_WEIGHT_NORMAL,
@@ -511,10 +516,15 @@ auto make_glyph_renderer(d3d_device const& device,
   );
   if (FAILED(hr)) return std::unexpected(make_hresult_error(hr));
 
-  // --- 3. Get font face & metrics -------------------------------------------
+  // --- Resolve font family ---------------------------------------------------
+  ComPtr<IDWriteFontFamily> resolved_family;
+  hr = resolve_font_family(p->text_format.Get(), wide_family.c_str(), resolved_family);
+  if (FAILED(hr)) return std::unexpected(make_hresult_error(hr));
+
+  // --- Get font face & metrics -----------------------------------------------
   uint32_t font_ascent = 0;
   uint32_t font_design_units_per_em = 0;
-  hr = init_font_face(p->dwrite_factory.Get(), wide_family.c_str(),
+  hr = init_font_face(p->dwrite_factory.Get(), resolved_family.Get(),
                        p->text_format.Get(),
                        p->cell_width, p->cell_height,
                        p->font_face,
@@ -528,36 +538,21 @@ auto make_glyph_renderer(d3d_device const& device,
   p->baseline_y = static_cast<float>(font_ascent) * k_font_size
                 / static_cast<float>(font_design_units_per_em);
 
-  // --- 3b. Get italic font face ---------------------------------------------
+  // --- Get italic font face --------------------------------------------------
   {
-    ComPtr<IDWriteFontCollection> font_collection;
-    hr = p->text_format->GetFontCollection(font_collection.GetAddressOf());
-    if (FAILED(hr)) return std::unexpected(make_hresult_error(hr));
+    UINT32 const count = resolved_family->GetFontCount();
+    for (UINT32 i = 0; i < count; ++i) {
+      ComPtr<IDWriteFont> font;
+      hr = resolved_family->GetFont(i, font.GetAddressOf());
+      if (FAILED(hr)) continue;
 
-    UINT32 family_index = 0;
-    BOOL exists = FALSE;
-    hr = font_collection->FindFamilyName(wide_family.c_str(), &family_index, &exists);
-    if (FAILED(hr)) return std::unexpected(make_hresult_error(hr));
-
-    if (exists) {
-      ComPtr<IDWriteFontFamily> font_family;
-      hr = font_collection->GetFontFamily(family_index, font_family.GetAddressOf());
-      if (FAILED(hr)) return std::unexpected(make_hresult_error(hr));
-
-      UINT32 const count = font_family->GetFontCount();
-      for (UINT32 i = 0; i < count; ++i) {
-        ComPtr<IDWriteFont> font;
-        hr = font_family->GetFont(i, font.GetAddressOf());
+      if (font->GetStyle() == DWRITE_FONT_STYLE_ITALIC) {
+        ComPtr<IDWriteFontFace> face;
+        hr = font->CreateFontFace(face.GetAddressOf());
         if (FAILED(hr)) continue;
 
-        if (font->GetStyle() == DWRITE_FONT_STYLE_ITALIC) {
-          ComPtr<IDWriteFontFace> face;
-          hr = font->CreateFontFace(face.GetAddressOf());
-          if (FAILED(hr)) continue;
-
-          hr = face.As(&p->font_face_italic);
-          if (SUCCEEDED(hr)) break;
-        }
+        hr = face.As(&p->font_face_italic);
+        if (SUCCEEDED(hr)) break;
       }
     }
     // If no italic face found, fall back to regular font face.
@@ -566,13 +561,13 @@ auto make_glyph_renderer(d3d_device const& device,
     }
   }
 
-  // --- 4. Determine atlas layout --------------------------------------------
+  // --- Determine atlas layout -------------------------------------------------
   p->slot_width  = p->cell_width  + k_glyph_padding * 2;
   p->slot_height = p->cell_height + k_glyph_padding * 2;
   p->atlas_width  = k_atlas_cols * p->slot_width;
   p->atlas_height = k_atlas_rows * p->slot_height;
 
-  // --- 5. Create atlas texture ----------------------------------------------
+  // --- Create static atlas texture --------------------------------------------
   {
     D3D11_TEXTURE2D_DESC tex_desc{};
     tex_desc.Width            = p->atlas_width;
@@ -589,7 +584,7 @@ auto make_glyph_renderer(d3d_device const& device,
     if (FAILED(hr)) return std::unexpected(make_hresult_error(hr));
   }
 
-  // --- 6. Create SRV --------------------------------------------------------
+  // --- Create static atlas SRV ------------------------------------------------
   {
     D3D11_SHADER_RESOURCE_VIEW_DESC srv_desc{};
     srv_desc.Format                    = DXGI_FORMAT_R8G8B8A8_UNORM;
@@ -602,7 +597,7 @@ auto make_glyph_renderer(d3d_device const& device,
     if (FAILED(hr)) return std::unexpected(make_hresult_error(hr));
   }
 
-  // --- 7. Rasterize glyphs (0x00–0x7F regular + italic) --------------------
+  // --- Rasterize ASCII glyphs (regular + italic) ------------------------------
   {
     size_t const buf_pixels = static_cast<size_t>(p->atlas_width) * static_cast<size_t>(p->atlas_height);
     std::vector<uint8_t> staging_buffer(buf_pixels * 4, 0);
@@ -627,8 +622,6 @@ auto make_glyph_renderer(d3d_device const& device,
 
         // Precompute UVs for this slot (content area, excluding padding).
         auto& slot = p->glyph_slots[slot_idx];
-        slot.atlas_x = static_cast<uint16_t>(slot_x);
-        slot.atlas_y = static_cast<uint16_t>(slot_y);
         slot.u0 = static_cast<float>(slot_x + k_glyph_padding)              / static_cast<float>(p->atlas_width);
         slot.v0 = static_cast<float>(slot_y + k_glyph_padding)              / static_cast<float>(p->atlas_height);
         slot.u1 = static_cast<float>(slot_x + k_glyph_padding + p->cell_width)  / static_cast<float>(p->atlas_width);
@@ -655,7 +648,7 @@ auto make_glyph_renderer(d3d_device const& device,
                                 p->atlas_width * 4, 0);
   }
 
-  // --- 7b. Create dynamic atlas texture (non-ASCII glyphs) -------------------
+  // --- Create dynamic atlas texture -------------------------------------------
   {
     p->dyn_atlas_width  = p->k_dyn_atlas_cols * p->slot_width;
     p->dyn_atlas_height = p->k_dyn_atlas_rows * p->slot_height;
@@ -702,8 +695,6 @@ auto make_glyph_renderer(d3d_device const& device,
       uint32_t const slot_y = row * p->slot_height;
 
       auto& slot = p->dyn_glyph_slots[i];
-      slot.atlas_x = static_cast<uint16_t>(slot_x);
-      slot.atlas_y = static_cast<uint16_t>(slot_y);
       slot.u0 = static_cast<float>(slot_x + k_glyph_padding) / static_cast<float>(p->dyn_atlas_width);
       slot.v0 = static_cast<float>(slot_y + k_glyph_padding) / static_cast<float>(p->dyn_atlas_height);
       slot.u1 = static_cast<float>(slot_x + k_glyph_padding + p->cell_width) / static_cast<float>(p->dyn_atlas_width);
@@ -711,7 +702,7 @@ auto make_glyph_renderer(d3d_device const& device,
     }
   }
 
-  // --- 8. Compile shaders ---------------------------------------------------
+  // --- Compile shaders --------------------------------------------------------
   ComPtr<ID3DBlob> vs_blob;
   hr = compile_shader(k_vertex_shader_src, "main", "vs_5_0", vs_blob.GetAddressOf());
   if (FAILED(hr)) return std::unexpected(make_hresult_error(hr));
@@ -720,7 +711,7 @@ auto make_glyph_renderer(d3d_device const& device,
   hr = compile_shader(k_pixel_shader_src, "main", "ps_5_0", ps_blob.GetAddressOf());
   if (FAILED(hr)) return std::unexpected(make_hresult_error(hr));
 
-  // --- 9. Create shader objects ---------------------------------------------
+  // --- Create vertex & pixel shader objects -----------------------------------
   hr = d3d_dev->CreateVertexShader(vs_blob->GetBufferPointer(),
                                     vs_blob->GetBufferSize(), nullptr,
                                     p->vertex_shader.GetAddressOf());
@@ -731,7 +722,7 @@ auto make_glyph_renderer(d3d_device const& device,
                                    p->pixel_shader.GetAddressOf());
   if (FAILED(hr)) return std::unexpected(make_hresult_error(hr));
 
-  // --- 10. Create input layout ----------------------------------------------
+  // --- Create input layout ---------------------------------------------------
   {
     D3D11_INPUT_ELEMENT_DESC layout[] = {
       { "POSITION",  0, DXGI_FORMAT_R32G32_FLOAT,   0, 0,                             D3D11_INPUT_PER_VERTEX_DATA, 0 },
@@ -747,17 +738,11 @@ auto make_glyph_renderer(d3d_device const& device,
     if (FAILED(hr)) return std::unexpected(make_hresult_error(hr));
   }
 
-  // --- 11. Create constant buffer -------------------------------------------
+  // --- Create constant buffer ------------------------------------------------
   {
     glyph_constants constants{};
     constants.window_width  = static_cast<float>(window_size.width);
     constants.window_height = static_cast<float>(window_size.height);
-    constants.cell_width    = static_cast<float>(p->cell_width);
-    constants.cell_height   = static_cast<float>(p->cell_height);
-    constants.inv_tex_width  = 1.0f / static_cast<float>(p->atlas_width);
-    constants.inv_tex_height = 1.0f / static_cast<float>(p->atlas_height);
-    constants._pad[0] = 0.0f;
-    constants._pad[1] = 0.0f;
 
     D3D11_BUFFER_DESC buf_desc{};
     buf_desc.ByteWidth = sizeof(glyph_constants);
@@ -772,7 +757,7 @@ auto make_glyph_renderer(d3d_device const& device,
     if (FAILED(hr)) return std::unexpected(make_hresult_error(hr));
   }
 
-  // --- 12. Create dynamic vertex buffer -------------------------------------
+  // --- Create dynamic vertex buffer ------------------------------------------
   {
     D3D11_BUFFER_DESC buf_desc{};
     buf_desc.ByteWidth      = k_max_vertices * sizeof(glyph_vertex);
@@ -785,7 +770,7 @@ auto make_glyph_renderer(d3d_device const& device,
     if (FAILED(hr)) return std::unexpected(make_hresult_error(hr));
   }
 
-  // --- 13. Create static index buffer ---------------------------------------
+  // --- Create static index buffer --------------------------------------------
   {
     std::array<uint16_t, k_max_indices> indices{};
     for (uint32_t q = 0; q < k_max_glyphs_per_frame; ++q) {
@@ -811,7 +796,7 @@ auto make_glyph_renderer(d3d_device const& device,
     if (FAILED(hr)) return std::unexpected(make_hresult_error(hr));
   }
 
-  // --- 14. Create sampler state (bilinear, clamp) ---------------------------
+  // --- Create sampler state --------------------------------------------------
   {
     D3D11_SAMPLER_DESC samp_desc{};
     samp_desc.Filter         = D3D11_FILTER_MIN_MAG_MIP_POINT;
@@ -825,7 +810,7 @@ auto make_glyph_renderer(d3d_device const& device,
     if (FAILED(hr)) return std::unexpected(make_hresult_error(hr));
   }
 
-  // --- 15. Create blend state (alpha blending) ------------------------------
+  // --- Create blend state ----------------------------------------------------
   {
     D3D11_BLEND_DESC blend_desc{};
     blend_desc.RenderTarget[0].BlendEnable   = TRUE;
@@ -842,7 +827,7 @@ auto make_glyph_renderer(d3d_device const& device,
     if (FAILED(hr)) return std::unexpected(make_hresult_error(hr));
   }
 
-  // --- 16. Create depth-stencil state (disabled) ----------------------------
+  // --- Create depth-stencil state --------------------------------------------
   {
     D3D11_DEPTH_STENCIL_DESC ds_desc{};
     ds_desc.DepthEnable    = FALSE;
@@ -853,7 +838,7 @@ auto make_glyph_renderer(d3d_device const& device,
     if (FAILED(hr)) return std::unexpected(make_hresult_error(hr));
   }
 
-  // --- 17. Create rasterizer state (no culling) ----------------------------
+  // --- Create rasterizer state -----------------------------------------------
   {
     D3D11_RASTERIZER_DESC rs_desc{};
     rs_desc.FillMode = D3D11_FILL_SOLID;
@@ -865,7 +850,7 @@ auto make_glyph_renderer(d3d_device const& device,
     if (FAILED(hr)) return std::unexpected(make_hresult_error(hr));
   }
 
-  // --- 18. Store window dimensions ------------------------------------------
+  // --- Store window dimensions -----------------------------------------------
   p->window_width  = window_size.width;
   p->window_height = window_size.height;
 
@@ -892,6 +877,14 @@ inline void write_glyph_quad(glyph_vertex* vertices, uint32_t quad_idx,
   vertices[v + 1] = { x1, y0, u1, v0, r, g, b, tex_id };
   vertices[v + 2] = { x1, y1, u1, v1, r, g, b, tex_id };
   vertices[v + 3] = { x0, y1, u0, v1, r, g, b, tex_id };
+}
+
+// Cell kind helpers — shared by draw_grid and prepare_unicode_glyphs.
+inline constexpr auto is_wide_lead(uint8_t kind) -> bool {
+  return kind == static_cast<uint8_t>(terminal::cell_kind::wide_lead);
+}
+inline constexpr auto is_wide_tail(uint8_t kind) -> bool {
+  return kind == static_cast<uint8_t>(terminal::cell_kind::wide_tail);
 }
 
 } // anonymous namespace
@@ -964,14 +957,6 @@ auto glyph_renderer::draw_grid(d3d_device const& device,
   constexpr uint8_t k_attr_strikethrough = terminal::to_uint8(cell_attr::strikethrough);
   constexpr uint8_t k_attr_reverse       = terminal::to_uint8(cell_attr::reverse);
 
-  // Cell kind helpers (canonical: terminal::cell_kind).
-  constexpr auto is_wide_lead = [](uint8_t kind) {
-    return kind == static_cast<uint8_t>(terminal::cell_kind::wide_lead);
-  };
-  constexpr auto is_wide_tail = [](uint8_t kind) {
-    return kind == static_cast<uint8_t>(terminal::cell_kind::wide_tail);
-  };
-
   // Only draw the cursor if it is set and lies within the visible area.
   bool const cursor_visible =
       cursor.has_value() && cursor->row < draw_rows && cursor->col < draw_cols;
@@ -1009,24 +994,24 @@ auto glyph_renderer::draw_grid(d3d_device const& device,
       auto const& fg_src = effective_reverse ? cell.bg : cell.fg;
       auto const& bg_src = effective_reverse ? cell.fg : cell.bg;
 
-      float const br = static_cast<float>(bg_src.r) / k_color_norm_div;
-      float const bgg = static_cast<float>(bg_src.g) / k_color_norm_div;
-      float const bb = static_cast<float>(bg_src.b) / k_color_norm_div;
+      float const bg_r = static_cast<float>(bg_src.r) / k_color_norm_div;
+      float const bg_g = static_cast<float>(bg_src.g) / k_color_norm_div;
+      float const bg_b = static_cast<float>(bg_src.b) / k_color_norm_div;
 
       // Faint reduces glyph intensity. Background is unaffected.
       float const intensity = (cell.attr & k_attr_faint) ? k_faint_intensity : k_full_intensity;
-      float const fr = static_cast<float>(fg_src.r) / k_color_norm_div * intensity;
-      float const fg_f = static_cast<float>(fg_src.g) / k_color_norm_div * intensity;
-      float const fb = static_cast<float>(fg_src.b) / k_color_norm_div * intensity;
+      float const fg_r = static_cast<float>(fg_src.r) / k_color_norm_div * intensity;
+      float const fg_g = static_cast<float>(fg_src.g) / k_color_norm_div * intensity;
+      float const fg_b = static_cast<float>(fg_src.b) / k_color_norm_div * intensity;
 
       // Background quad — always emitted.
-      emit_bg_quad(x0, y0, x1, y1, br, bgg, bb);
+      emit_bg_quad(x0, y0, x1, y1, bg_r, bg_g, bg_b);
 
       // Foreground glyph — only if the cell is not a space.
       char32_t const cp = cell.codepoint;
       if (cp != U' ' && cp != 0) {
         if (cp <= k_ascii_max) {
-          unsigned char const glyph = static_cast<unsigned char>(cp);
+          uint8_t const glyph = static_cast<uint8_t>(cp);
 
           // Italic uses upper half of atlas slots.
           uint32_t const slot_idx =
@@ -1035,13 +1020,16 @@ auto glyph_renderer::draw_grid(d3d_device const& device,
 
           emit_glyph_quad(x0, y0, x1, y1,
                          slot.u0, slot.v0, slot.u1, slot.v1,
-                         fr, fg_f, fb, atlas_kind::static_atlas);
+                         fg_r, fg_g, fg_b, atlas_kind::static_atlas);
 
           // Bold: synthetic double-draw with 1px horizontal offset.
+          // Clamp x1 so the shifted quad doesn't extend past the viewport.
           if (cell.attr & k_attr_bold) {
-            emit_glyph_quad(x0 + k_bold_offset_px, y0, x1 + k_bold_offset_px, y1,
+            float const x1_bold = std::min(x1 + k_bold_offset_px,
+                                            static_cast<float>(impl_->window_width));
+            emit_glyph_quad(x0 + k_bold_offset_px, y0, x1_bold, y1,
                            slot.u0, slot.v0, slot.u1, slot.v1,
-                           fr, fg_f, fb, atlas_kind::static_atlas);
+                           fg_r, fg_g, fg_b, atlas_kind::static_atlas);
           }
         } else {
           // Non-ASCII: look up in dynamic atlas.
@@ -1051,12 +1039,14 @@ auto glyph_renderer::draw_grid(d3d_device const& device,
 
             emit_glyph_quad(x0, y0, x1, y1,
                            slot.u0, slot.v0, slot.u1, slot.v1,
-                           fr, fg_f, fb, atlas_kind::dyn_atlas);
+                           fg_r, fg_g, fg_b, atlas_kind::dyn_atlas);
 
             if (cell.attr & k_attr_bold) {
-              emit_glyph_quad(x0 + k_bold_offset_px, y0, x1 + k_bold_offset_px, y1,
+              float const x1_bold = std::min(x1 + k_bold_offset_px,
+                                              static_cast<float>(impl_->window_width));
+              emit_glyph_quad(x0 + k_bold_offset_px, y0, x1_bold, y1,
                              slot.u0, slot.v0, slot.u1, slot.v1,
-                             fr, fg_f, fb, atlas_kind::dyn_atlas);
+                             fg_r, fg_g, fg_b, atlas_kind::dyn_atlas);
             }
           }
           // If glyph not in cache, silently skip (shouldn't happen after prepare).
@@ -1066,14 +1056,14 @@ auto glyph_renderer::draw_grid(d3d_device const& device,
       // Underline: thin solid quad at cell bottom.
       if (cell.attr & k_attr_underline) {
         float const uy0 = y1 - k_underline_thickness_px;
-        emit_bg_quad(x0, uy0, x1, y1, fr, fg_f, fb);
+        emit_bg_quad(x0, uy0, x1, y1, fg_r, fg_g, fg_b);
       }
 
       // Strikethrough: thin solid quad.
       if (cell.attr & k_attr_strikethrough) {
         float const sy0 = y0 + static_cast<float>(impl_->cell_height) * k_strikethrough_position;
         float const sy1 = sy0 + k_strikethrough_thickness_px;
-        emit_bg_quad(x0, sy0, x1, sy1, fr, fg_f, fb);
+        emit_bg_quad(x0, sy0, x1, sy1, fg_r, fg_g, fg_b);
       }
 
       // Advance column.
@@ -1102,7 +1092,7 @@ void glyph_renderer::bind_pipeline_and_draw(
   auto* context = device.impl_->context.Get();
 
   context->OMSetRenderTargets(1, rtv.impl_->rtv.GetAddressOf(), nullptr);
-  context->OMSetBlendState(impl_->blend_state.Get(), nullptr, 0xFFFFFFFF);
+  context->OMSetBlendState(impl_->blend_state.Get(), nullptr, D3D11_DEFAULT_SAMPLE_MASK);
   context->OMSetDepthStencilState(impl_->depth_state.Get(), 0);
   context->RSSetState(impl_->rasterizer_state.Get());
 
@@ -1143,12 +1133,6 @@ auto glyph_renderer::update_dimensions(d3d_device const& device,
   glyph_constants constants{};
   constants.window_width   = static_cast<float>(dims.width);
   constants.window_height  = static_cast<float>(dims.height);
-  constants.cell_width     = static_cast<float>(impl_->cell_width);
-  constants.cell_height    = static_cast<float>(impl_->cell_height);
-  constants.inv_tex_width  = 1.0f / static_cast<float>(impl_->atlas_width);
-  constants.inv_tex_height = 1.0f / static_cast<float>(impl_->atlas_height);
-  constants._pad[0] = 0.0f;
-  constants._pad[1] = 0.0f;
 
   context->UpdateSubresource(impl_->constant_buffer.Get(), 0, nullptr,
                               &constants, 0, 0);
@@ -1164,7 +1148,7 @@ auto glyph_renderer::update_dimensions(d3d_device const& device,
 // ===========================================================================
 
 auto glyph_renderer::ensure_glyph_cached(char32_t cp, d3d_device const& device)
-    -> uint32_t
+    -> std::optional<uint32_t>
 {
   auto* ctx = device.impl_->context.Get();
   auto& p = *impl_;
@@ -1192,12 +1176,10 @@ auto glyph_renderer::ensure_glyph_cached(char32_t cp, d3d_device const& device)
       }
     }
     slot = min_slot;
-    // Remove the evicted codepoint from the index.
-    for (auto const& kv : p.dyn_index_) {
-      if (kv.second == slot) {
-        p.dyn_index_.erase(kv.first);
-        break;
-      }
+    // Remove the evicted codepoint from the index (O(1) via reverse array).
+    char32_t const evicted_cp = p.dyn_slot_cp_[slot];
+    if (evicted_cp != 0) {
+      p.dyn_index_.erase(evicted_cp);
     }
   }
 
@@ -1213,21 +1195,28 @@ auto glyph_renderer::ensure_glyph_cached(char32_t cp, d3d_device const& device)
 
   float const k_font_size = static_cast<float>(p.font_size_px);
 
-  // Pass slot origin (0, 0) — since the staging buffer is only one slot,
-  // absolute positions would overflow.  origin_x/y computed inside
-  // rasterize_glyph become relative to the slot, matching the buffer size.
-  bool const rasterized = rasterize_glyph(
-    p.dwrite_factory.Get(),
-    p.font_face.Get(),
-    k_font_size,
-    static_cast<uint32_t>(cp),
-    0, 0,
-    p.slot_width,
-    p.cell_width, p.cell_height,
-    p.baseline_y,
-    p.design_units_per_em,
-    staging_buffer
-  );
+  // Helper: rasterize a codepoint into the staging buffer.
+  // Slot origin is (0, 0) — the buffer covers exactly one slot.
+  auto const try_rasterize = [&](char32_t codepoint) -> bool {
+    return rasterize_glyph(
+      p.dwrite_factory.Get(),
+      p.font_face.Get(),
+      k_font_size,
+      static_cast<uint32_t>(codepoint),
+      0, 0,
+      p.slot_width,
+      p.cell_width, p.cell_height,
+      p.baseline_y,
+      p.design_units_per_em,
+      staging_buffer
+    );
+  };
+
+  // Try the requested codepoint first, then fall back to .notdef (glyph index 0).
+  bool rasterized = try_rasterize(cp);
+  if (!rasterized) {
+    rasterized = try_rasterize(U'\0');
+  }
 
   // Upload the slot region to the dynamic atlas texture.
   if (rasterized) {
@@ -1242,11 +1231,14 @@ auto glyph_renderer::ensure_glyph_cached(char32_t cp, d3d_device const& device)
     ctx->UpdateSubresource(p.dyn_atlas_texture.Get(), 0, &box,
                             staging_buffer.data(),
                             p.slot_width * 4, 0);
+
+    p.dyn_index_[cp] = slot;
+    p.dyn_slot_cp_[slot] = cp;
+    return slot;
   }
 
-  // Store in index regardless of rasterization success (avoids retrying).
-  p.dyn_index_[cp] = slot;
-  return slot;
+  // Even .notdef failed — don't cache, caller will retry next frame.
+  return std::nullopt;
 }
 
 // ===========================================================================
@@ -1257,14 +1249,10 @@ void glyph_renderer::prepare_unicode_glyphs(
     d3d_device const& device,
     std::span<const render_cell> cells)
 {
-  constexpr auto is_wide_tail_kind = [](uint8_t kind) {
-    return kind == static_cast<uint8_t>(terminal::cell_kind::wide_tail);
-  };
-
   for (auto const& cell : cells) {
     if (cell.codepoint <= 127) continue;
     if (cell.codepoint == U' ') continue;
-    if (is_wide_tail_kind(cell.kind)) continue;
+    if (is_wide_tail(cell.kind)) continue;
     (void)ensure_glyph_cached(cell.codepoint, device);
   }
 }

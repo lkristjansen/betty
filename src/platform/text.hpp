@@ -21,9 +21,10 @@ struct d3d_render_target_view;
 // Renders monospace glyphs from a pre-baked texture atlas.
 // Supports per-cell foreground/background colours via vertex colour data.
 struct glyph_renderer {
-  // Accessors for computed font metrics (available after successful creation).
-  auto cell_width() const -> uint32_t;
-  auto cell_height() const -> uint32_t;
+  // Accessors for computed font metrics.
+  // Precondition: the renderer must not have been moved from.
+  auto cell_width() const noexcept -> uint32_t;
+  auto cell_height() const noexcept -> uint32_t;
 
   // Update the constant buffer with new window dimensions.
   // Must be called after a window resize so the vertex shader's NDC
@@ -70,10 +71,11 @@ private:
                                d3d_render_target_view const& rtv,
                                uint32_t quad_count) const;
 
-  // Ensure a non-ASCII glyph is in the dynamic atlas cache, rasterizing if needed.
-  // Returns the slot index or SIZE_MAX on failure.
+  // Ensure a glyph is in the dynamic atlas cache, rasterizing if needed.
+  // Falls back to .notdef if the requested codepoint cannot be rasterized.
+  // Returns the slot index, or std::nullopt if even the fallback fails.
   [[nodiscard]] auto ensure_glyph_cached(char32_t cp, struct d3d_device const& device)
-      -> uint32_t;
+      -> std::optional<uint32_t>;
 
   friend auto make_glyph_renderer(d3d_device const&,
                                     std::string_view, float, uint32_t,
