@@ -14,12 +14,22 @@ int main() {
     }
   }
 
-  // Parse configuration.  On TOML syntax errors, show a message box and
-  // continue with built-in defaults (cfg falls back to the default struct).
-  auto config_result = betty::parse_config(exe_dir);
-  if (!config_result) {
-    betty::platform::show_error_message("betty - Configuration Error", config_result.error());
+  // Parse and validate configuration.
+  auto [cfg, errors] = betty::parse_config(exe_dir);
+
+  // Check for fatal errors (shell) — terminate after showing the message.
+  bool has_fatal = false;
+  for (auto const& e : errors) {
+    if (e.fatal) has_fatal = true;
   }
+
+  if (!errors.empty()) {
+    auto msg = betty::format_validation_errors(errors);
+    betty::platform::show_error_message("betty - Configuration Error", msg);
+    if (has_fatal) return 1;
+  }
+
+  // (cfg is not yet wired — C6 will pass it into make_application.)
 
   auto app = betty::make_application();
   if (!app) return 1;

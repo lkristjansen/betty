@@ -1,9 +1,9 @@
 #pragma once
 #include <cstdint>
-#include <expected>
 #include <filesystem>
 #include <optional>
 #include <string>
+#include <vector>
 
 namespace betty {
 
@@ -12,7 +12,8 @@ namespace betty {
 // ===========================================================================
 // Every field is optional with an in-class default matching the built-in
 // hardcoded value.  After a successful parse_config(), all fields have a
-// value (the default or the user's override).
+// value (the default or the user's override).  Invalid fields are reset
+// to their defaults during validation.
 
 struct betty_config {
   std::optional<std::string> font_family      = "Consolas";
@@ -25,20 +26,44 @@ struct betty_config {
 };
 
 // ===========================================================================
-// parse_config — load and parse config.toml
+// Validation types
+// ===========================================================================
+
+struct config_error {
+  std::string key;      // field name, e.g. "cursor_style"
+  std::string message;  // human-readable description
+  std::string value;    // the offending value from the TOML file
+  bool fatal = false;   // if true, betty must terminate after showing the error
+};
+
+struct parse_result {
+  betty_config config;                    // always populated (defaults if parse fails)
+  std::vector<config_error> errors;       // empty on success
+};
+
+// ===========================================================================
+// format_validation_errors
+// ===========================================================================
+// Format a vector of config_errors into a multi-line message suitable for
+// a Windows message box.  Returns an empty string if the vector is empty.
+
+[[nodiscard]] auto format_validation_errors(std::vector<config_error> const& errors)
+    -> std::string;
+
+// ===========================================================================
+// parse_config — load, parse, and validate config.toml
 // ===========================================================================
 // Looks for `config.toml` inside `exe_dir` (the directory containing
 // betty.exe).  Callers obtain `exe_dir` via GetModuleFileNameW +
 // parent_path().
 //
-// Returns:
-//   • The populated config on success (missing file = success with defaults).
-//   • An error string on TOML syntax errors (malformed file).
+// Always returns a usable config — bad fields are reset to their defaults.
+// Check `errors` for any problems.  If any error has `fatal == true`,
+// betty should exit after displaying the message.
 //
 // Unknown keys are silently ignored for forward compatibility.
-// Type validation of individual values is deferred to validate_config() (C5).
 
 [[nodiscard]] auto parse_config(std::filesystem::path const& exe_dir)
-    -> std::expected<betty_config, std::string>;
+    -> parse_result;
 
 } // namespace betty

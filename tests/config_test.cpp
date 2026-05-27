@@ -21,8 +21,8 @@ TEST_CASE("parse_config — missing file returns defaults", "[config]") {
     fs::remove(dir / "config.toml");
 
     auto result = betty::parse_config(dir);
-    REQUIRE(result.has_value());
-    auto const& cfg = *result;
+    CHECK(result.errors.empty());
+    auto const& cfg = result.config;
 
     CHECK(cfg.font_family.value()      == "Consolas");
     CHECK(cfg.font_size.value()        == 14.0f);
@@ -53,8 +53,8 @@ shell = "pwsh.exe -NoLogo"
 )");
 
     auto result = betty::parse_config(dir);
-    REQUIRE(result.has_value());
-    auto const& cfg = *result;
+    CHECK(result.errors.empty());
+    auto const& cfg = result.config;
 
     CHECK(cfg.font_family.value()      == "Cascadia Code");
     CHECK(cfg.font_size.value()        == 13.0f);
@@ -80,8 +80,8 @@ scrollback_lines = 5000
 )");
 
     auto result = betty::parse_config(dir);
-    REQUIRE(result.has_value());
-    auto const& cfg = *result;
+    CHECK(result.errors.empty());
+    auto const& cfg = result.config;
 
     CHECK(cfg.font_family.value()      == "JetBrains Mono");
     CHECK(cfg.scrollback_lines.value() == 5000);
@@ -109,8 +109,8 @@ another_one = 42
 )");
 
     auto result = betty::parse_config(dir);
-    REQUIRE(result.has_value());
-    auto const& cfg = *result;
+    CHECK(result.errors.empty());
+    auto const& cfg = result.config;
     CHECK(cfg.font_family.value() == "Consolas");
     CHECK(cfg.font_size.value() == 14.0f);
 
@@ -121,7 +121,7 @@ another_one = 42
 // TOML syntax error
 // ===========================================================================
 
-TEST_CASE("parse_config — TOML syntax error returns error string", "[config]") {
+TEST_CASE("parse_config — TOML syntax error returns error vector", "[config]") {
     fs::path dir = fs::temp_directory_path() / "betty_test_bad_syntax";
     fs::create_directories(dir);
     write_temp_config(dir, R"(
@@ -130,8 +130,10 @@ font_family = "Consolas"
 )");
 
     auto result = betty::parse_config(dir);
-    REQUIRE(!result.has_value());
-    CHECK(!result.error().empty());
+    REQUIRE(!result.errors.empty());
+    CHECK(!result.errors[0].message.empty());
+    // Config should still be at defaults.
+    CHECK(result.config.font_family.value() == "Consolas");
 
     fs::remove_all(dir);
 }
@@ -146,8 +148,8 @@ TEST_CASE("parse_config — empty TOML file returns all defaults", "[config]") {
     write_temp_config(dir, "");
 
     auto result = betty::parse_config(dir);
-    REQUIRE(result.has_value());
-    auto const& cfg = *result;
+    CHECK(result.errors.empty());
+    auto const& cfg = result.config;
 
     CHECK(cfg.font_family.value() == "Consolas");
     CHECK(cfg.font_size.value() == 14.0f);
@@ -165,9 +167,186 @@ TEST_CASE("parse_config — integer font_size is accepted", "[config]") {
     write_temp_config(dir, "font_size = 18\n");
 
     auto result = betty::parse_config(dir);
-    REQUIRE(result.has_value());
-    auto const& cfg = *result;
+    CHECK(result.errors.empty());
+    auto const& cfg = result.config;
     CHECK(cfg.font_size.value() == 18.0f);
 
     fs::remove_all(dir);
+}
+
+// ===========================================================================
+// Validation: empty font_family
+// ===========================================================================
+
+TEST_CASE("parse_config — validation: empty font_family is an error", "[config][validation]") {
+    fs::path dir = fs::temp_directory_path() / "betty_test_val_font";
+    fs::create_directories(dir);
+    write_temp_config(dir, "font_family = \"\"\n");
+
+    auto result = betty::parse_config(dir);
+    REQUIRE(result.errors.size() >= 1);
+    CHECK(result.errors[0].key == "font_family");
+    CHECK(result.config.font_family.value() == "Consolas");  // reset to default
+
+    fs::remove_all(dir);
+}
+
+// ===========================================================================
+// Validation: bad cursor_style
+// ===========================================================================
+
+TEST_CASE("parse_config — validation: bad cursor_style is an error", "[config][validation]") {
+    fs::path dir = fs::temp_directory_path() / "betty_test_val_cursor";
+    fs::create_directories(dir);
+    write_temp_config(dir, "cursor_style = \"beam\"\n");
+
+    auto result = betty::parse_config(dir);
+    REQUIRE(result.errors.size() >= 1);
+    CHECK(result.errors[0].key == "cursor_style");
+    CHECK(result.config.cursor_style.value() == "block");  // reset to default
+
+    fs::remove_all(dir);
+}
+
+// ===========================================================================
+// Validation: scrollback_lines zero
+// ===========================================================================
+
+TEST_CASE("parse_config — validation: scrollback_lines zero is an error", "[config][validation]") {
+    fs::path dir = fs::temp_directory_path() / "betty_test_val_scrollback";
+    fs::create_directories(dir);
+    write_temp_config(dir, "scrollback_lines = 0\n");
+
+    auto result = betty::parse_config(dir);
+    REQUIRE(result.errors.size() >= 1);
+    CHECK(result.errors[0].key == "scrollback_lines");
+    CHECK(result.config.scrollback_lines.value() == 10000);
+
+    fs::remove_all(dir);
+}
+
+// ===========================================================================
+// Validation: columns zero
+// ===========================================================================
+
+TEST_CASE("parse_config — validation: columns zero is an error", "[config][validation]") {
+    fs::path dir = fs::temp_directory_path() / "betty_test_val_cols";
+    fs::create_directories(dir);
+    write_temp_config(dir, "columns = 0\n");
+
+    auto result = betty::parse_config(dir);
+    REQUIRE(result.errors.size() >= 1);
+    CHECK(result.errors[0].key == "columns");
+    CHECK(result.config.columns.value() == 120);
+
+    fs::remove_all(dir);
+}
+
+// ===========================================================================
+// Validation: rows zero
+// ===========================================================================
+
+TEST_CASE("parse_config — validation: rows zero is an error", "[config][validation]") {
+    fs::path dir = fs::temp_directory_path() / "betty_test_val_rows";
+    fs::create_directories(dir);
+    write_temp_config(dir, "rows = 0\n");
+
+    auto result = betty::parse_config(dir);
+    REQUIRE(result.errors.size() >= 1);
+    CHECK(result.errors[0].key == "rows");
+    CHECK(result.config.rows.value() == 40);
+
+    fs::remove_all(dir);
+}
+
+// ===========================================================================
+// Validation: empty shell is fatal
+// ===========================================================================
+
+TEST_CASE("parse_config — validation: empty shell is fatal", "[config][validation]") {
+    fs::path dir = fs::temp_directory_path() / "betty_test_val_shell";
+    fs::create_directories(dir);
+    write_temp_config(dir, "shell = \"\"\n");
+
+    auto result = betty::parse_config(dir);
+    REQUIRE(result.errors.size() >= 1);
+    CHECK(result.errors[0].key == "shell");
+    CHECK(result.errors[0].fatal == true);
+
+    fs::remove_all(dir);
+}
+
+// ===========================================================================
+// Validation: font_size is clamped, not errored
+// ===========================================================================
+
+TEST_CASE("parse_config — validation: font_size is clamped, not errored", "[config][validation]") {
+    fs::path dir = fs::temp_directory_path() / "betty_test_val_fontsize";
+    fs::create_directories(dir);
+
+    // Too small → clamped to 6.0
+    write_temp_config(dir, "font_size = 2.0\n");
+    auto result = betty::parse_config(dir);
+    CHECK(result.errors.empty());
+    CHECK(result.config.font_size.value() == 6.0f);
+
+    // Too large → clamped to 36.0
+    write_temp_config(dir, "font_size = 100.0\n");
+    result = betty::parse_config(dir);
+    CHECK(result.errors.empty());
+    CHECK(result.config.font_size.value() == 36.0f);
+
+    fs::remove_all(dir);
+}
+
+// ===========================================================================
+// Validation: multiple errors collected
+// ===========================================================================
+
+TEST_CASE("parse_config — validation: multiple errors collected", "[config][validation]") {
+    fs::path dir = fs::temp_directory_path() / "betty_test_val_multi";
+    fs::create_directories(dir);
+    write_temp_config(dir, R"(
+cursor_style = "underline"
+scrollback_lines = -50
+columns = 0
+)");
+
+    auto result = betty::parse_config(dir);
+    CHECK(result.errors.size() == 3);
+    // Verify all bad keys are present.
+    bool has_cursor = false, has_scrollback = false, has_columns = false;
+    for (auto const& e : result.errors) {
+      if (e.key == "cursor_style") has_cursor = true;
+      if (e.key == "scrollback_lines") has_scrollback = true;
+      if (e.key == "columns") has_columns = true;
+    }
+    CHECK(has_cursor);
+    CHECK(has_scrollback);
+    CHECK(has_columns);
+
+    // All bad fields reset to defaults.
+    CHECK(result.config.cursor_style.value() == "block");
+    CHECK(result.config.scrollback_lines.value() == 10000);
+    CHECK(result.config.columns.value() == 120);
+
+    fs::remove_all(dir);
+}
+
+// ===========================================================================
+// format_validation_errors
+// ===========================================================================
+
+TEST_CASE("format_validation_errors — empty vector returns empty string", "[config]") {
+    auto msg = betty::format_validation_errors({});
+    CHECK(msg.empty());
+}
+
+TEST_CASE("format_validation_errors — single error produces message", "[config]") {
+    std::vector<betty::config_error> errors;
+    errors.push_back({"cursor_style", "bad value", "beam", false});
+    auto msg = betty::format_validation_errors(errors);
+    CHECK(!msg.empty());
+    CHECK(msg.find("cursor_style") != std::string::npos);
+    CHECK(msg.find("bad value") != std::string::npos);
 }
