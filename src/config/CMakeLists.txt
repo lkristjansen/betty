@@ -9,6 +9,7 @@ FetchContent_MakeAvailable(tomlplusplus)
 
 add_library(config STATIC
     config.cpp
+    config_watcher.cpp
 )
 
 target_include_directories(config PUBLIC ${CMAKE_CURRENT_SOURCE_DIR})
