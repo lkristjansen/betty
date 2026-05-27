@@ -14,11 +14,15 @@ renderer_context::renderer_context(renderer_context&&) noexcept = default;
 renderer_context& renderer_context::operator=(renderer_context&&) noexcept = default;
 
 renderer_context::renderer_context(d3d_device device, d3d_swap_chain swap_chain,
-                                   d3d_render_target_view rtv, glyph_renderer renderer)
+                                   d3d_render_target_view rtv, glyph_renderer renderer,
+                                   uint32_t dpi, std::string font_family, float font_size_pt)
     : device_(std::move(device))
     , swap_chain_(std::move(swap_chain))
     , rtv_(std::move(rtv))
-    , renderer_(std::move(renderer)) {}
+    , renderer_(std::move(renderer))
+    , dpi_(dpi)
+    , font_family_(std::move(font_family))
+    , font_size_pt_(font_size_pt) {}
 
 // ===========================================================================
 // Frame-level API
@@ -39,6 +43,24 @@ auto renderer_context::draw_grid(std::span<render_cell const> cells,
 
 auto renderer_context::end_frame() const -> std::expected<void, std::error_code> {
   return swap_chain_.present();
+}
+
+// ===========================================================================
+// Font
+// ===========================================================================
+
+auto renderer_context::recreate_font(std::string_view font_family,
+                                      float font_size_pt)
+    -> std::expected<void, std::error_code> {
+  window_dimensions const dims{window_width_, window_height_};
+
+  auto new_renderer = make_glyph_renderer(device_, font_family, font_size_pt, dpi_, dims);
+  if (!new_renderer) return std::unexpected(new_renderer.error());
+
+  renderer_ = std::move(*new_renderer);
+  font_family_ = font_family;
+  font_size_pt_ = font_size_pt;
+  return {};
 }
 
 // ===========================================================================
@@ -63,6 +85,8 @@ auto renderer_context::handle_resize(uint32_t width, uint32_t height)
   if (!dims_result) {
     return std::unexpected(dims_result.error());
   }
+  window_width_ = width;
+  window_height_ = height;
   return {};
 }
 
@@ -126,7 +150,8 @@ auto make_renderer_context(win32_window const& window,
   auto renderer = std::move(*renderer_result);
 
   return renderer_context{std::move(device), std::move(swap_chain),
-                           std::move(rtv), std::move(renderer)};
+                           std::move(rtv), std::move(renderer),
+                           dpi, std::string(font_family), font_size_pt};
 }
 
 } // namespace betty::platform

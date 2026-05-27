@@ -32,11 +32,13 @@ private:
   void on_key(platform::vk_code vk, bool ctrl, bool shift, bool alt);
   void on_char(uint32_t codepoint);
   void on_resize(uint32_t width, uint32_t height, bool completed);
+  void on_config_changed();
 
   platform::win32_window window_;
   platform::renderer_context renderer_ctx_;
   terminal::terminal_session session_;
   betty_config config_;
+  std::filesystem::path config_dir_;
   std::unique_ptr<std::atomic<bool>> config_changed_ =
       std::make_unique<std::atomic<bool>>(false);
   config_watcher watcher_;

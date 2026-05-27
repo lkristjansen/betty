@@ -67,6 +67,9 @@ public:
   // Resize the grid and notify the shell.
   void resize(uint32_t cols, uint32_t rows);
 
+  // Change scrollback capacity without changing grid dimensions.
+  void resize_scrollback(uint32_t max_lines);
+
   // --- Queries for rendering ------------------------------------------------
 
   [[nodiscard]] auto render_cells() -> std::span<const platform::render_cell>;

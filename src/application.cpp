@@ -25,7 +25,8 @@ application::application(platform::win32_window window,
     , renderer_ctx_(std::move(renderer_ctx))
     , session_(std::move(session))
     , config_(std::move(config))
-    , watcher_(std::move(config_dir), config_changed_.get()) {}
+    , config_dir_(config_dir)
+    , watcher_(config_dir_, config_changed_.get()) {}
 
 // ===========================================================================
 // callback handlers
@@ -60,6 +61,64 @@ void application::on_resize(uint32_t width, uint32_t height, bool completed) {
       session_.resize(new_cols, new_rows);
     }
   }
+}
+
+// ===========================================================================
+// on_config_changed — hot-reload handler
+// ===========================================================================
+
+void application::on_config_changed() {
+  auto result = parse_config(config_dir_);
+  auto const& new_cfg = result.config;
+
+  // Font changes.
+  if (new_cfg.font_family != config_.font_family ||
+      new_cfg.font_size != config_.font_size) {
+    auto const family = *new_cfg.font_family;
+    auto const size = *new_cfg.font_size;
+    if (auto res = renderer_ctx_.recreate_font(family, size); !res) {
+      util::log_error(res.error(), "hot-reload: recreate font");
+      return;
+    }
+    config_.font_family = family;
+    config_.font_size = size;
+  }
+
+  // cursor_style — update stored value (read every frame).
+  if (new_cfg.cursor_style != config_.cursor_style) {
+    config_.cursor_style = new_cfg.cursor_style;
+  }
+
+  // scrollback_lines.
+  if (new_cfg.scrollback_lines != config_.scrollback_lines) {
+    session_.resize_scrollback(*new_cfg.scrollback_lines);
+    config_.scrollback_lines = new_cfg.scrollback_lines;
+  }
+
+  // columns / rows.
+  bool const cols_changed = (new_cfg.columns != config_.columns);
+  bool const rows_changed = (new_cfg.rows != config_.rows);
+  if (cols_changed || rows_changed) {
+    uint32_t const new_cols = cols_changed ? *new_cfg.columns : *config_.columns;
+    uint32_t const new_rows = rows_changed ? *new_cfg.rows : *config_.rows;
+
+    uint32_t const cell_w = renderer_ctx_.cell_width();
+    uint32_t const cell_h = renderer_ctx_.cell_height();
+    uint32_t const pad = platform::k_padding_px;
+    auto const exact_size = compute_window_size(new_cols, new_rows, cell_w, cell_h, pad);
+
+    window_.resize_client_area(exact_size.width, exact_size.height);
+    if (auto res = renderer_ctx_.handle_resize(exact_size.width, exact_size.height); !res) {
+      util::log_error(res.error(), "hot-reload: resize renderer");
+      return;
+    }
+    session_.resize(new_cols, new_rows);
+
+    config_.columns = new_cols;
+    config_.rows = new_rows;
+  }
+
+  // shell: silently ignored (requires restart).
 }
 
 // ===========================================================================
@@ -104,7 +163,7 @@ int application::run() {
 
     // Check for config.toml changes (hot-reload handler in C9).
     if (config_changed_->exchange(false, std::memory_order_acquire)) {
-      // C9 will re-parse config.toml and apply changes here.
+      on_config_changed();
     }
 
     auto const cells = session_.render_cells();

@@ -126,6 +126,9 @@ public:
 
   void resize(uint32_t new_cols, uint32_t new_rows);
 
+  // Change scrollback capacity without changing grid dimensions.
+  void resize_scrollback(uint32_t new_max_lines);
+
   // --- Observer for out-of-band terminal events (e.g. OSC window title) -----
 
   void set_observer(on_title_callback on_title);

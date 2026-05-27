@@ -669,6 +669,16 @@ void terminal_grid::resize(uint32_t new_cols, uint32_t new_rows) {
 }
 
 // ===========================================================================
+// resize_scrollback
+// ===========================================================================
+
+void terminal_grid::resize_scrollback(uint32_t new_max_lines) {
+  if (new_max_lines == scrollback_max_lines_) return;
+  scrollback_max_lines_ = new_max_lines;
+  buffer_.resize(cols_, rows_, new_max_lines);
+}
+
+// ===========================================================================
 // set_observer
 // ===========================================================================
 
