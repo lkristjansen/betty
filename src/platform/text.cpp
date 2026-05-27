@@ -328,6 +328,119 @@ auto init_font_face(IDWriteFactory* factory,
   return S_OK;
 }
 
+// Characters that should form continuous horizontal lines when repeated.
+// In a terminal, consecutive dashes, equals signs, underscores, etc. should
+// connect seamlessly — stretching their glyph to fill the full cell width
+// eliminates the sub-cell gaps that would otherwise break the line.
+auto is_horizontal_connector(char32_t cp) -> bool {
+  switch (cp) {
+    // ASCII
+    case U'-':    // HYPHEN-MINUS
+    case U'=':    // EQUALS SIGN
+    case U'_':    // LOW LINE
+    // Box-drawing horizontal lines
+    case U'\u2500':  // BOX DRAWINGS LIGHT HORIZONTAL
+    case U'\u2501':  // BOX DRAWINGS HEAVY HORIZONTAL
+    case U'\u2550':  // BOX DRAWINGS DOUBLE HORIZONTAL
+    // Dashes
+    case U'\u2013':  // EN DASH
+    case U'\u2014':  // EM DASH
+      return true;
+    default:
+      return false;
+  }
+}
+
+// Stretch non-transparent pixels in a rectangular region of a staging buffer
+// so they fill the full content-area width horizontally.  This makes glyphs
+// like '-' connect seamlessly with their neighbours when placed in adjacent
+// cells.
+//
+// `buffer`        – RGBA staging buffer for the full atlas texture
+// `atlas_width`   – row stride in pixels
+// `content_x`     – x pixel of the content area’s left edge
+// `content_y`     – y pixel of the content area’s top edge
+// `content_width` – content area width in pixels (== cell_width)
+// `content_height`– content area height in pixels (== cell_height)
+void stretch_glyph_horizontal(std::vector<uint8_t>& buffer,
+                               uint32_t atlas_width,
+                               uint32_t content_x, uint32_t content_y,
+                               uint32_t content_width, uint32_t content_height) {
+  if (content_width == 0 || content_height == 0) return;
+
+  // 1. Find the horizontal extent of non-transparent pixels in the content area.
+  uint32_t ink_min = content_width;
+  uint32_t ink_max = 0;
+  bool found = false;
+
+  for (uint32_t y = 0; y < content_height; ++y) {
+    for (uint32_t x = 0; x < content_width; ++x) {
+      size_t idx = (static_cast<size_t>(content_y + y) * atlas_width
+                     + static_cast<size_t>(content_x + x)) * 4 + 3;  // alpha channel
+      if (buffer[idx] != 0) {
+        if (x < ink_min) ink_min = x;
+        if (x > ink_max) ink_max = x;
+        found = true;
+      }
+    }
+  }
+
+  // Nothing to stretch, or ink already fills the cell.
+  if (!found || ink_min >= ink_max) return;
+  if (ink_min == 0 && ink_max >= content_width - 1) return;
+
+  // 2. Copy the content area into a temporary buffer so we can scale in-place.
+  std::vector<uint8_t> temp(static_cast<size_t>(content_width) * content_height * 4);
+  for (uint32_t y = 0; y < content_height; ++y) {
+    for (uint32_t x = 0; x < content_width; ++x) {
+      size_t src_idx = (static_cast<size_t>(content_y + y) * atlas_width
+                         + static_cast<size_t>(content_x + x)) * 4;
+      size_t dst_idx = (static_cast<size_t>(y) * content_width
+                         + static_cast<size_t>(x)) * 4;
+      temp[dst_idx + 0] = buffer[src_idx + 0];
+      temp[dst_idx + 1] = buffer[src_idx + 1];
+      temp[dst_idx + 2] = buffer[src_idx + 2];
+      temp[dst_idx + 3] = buffer[src_idx + 3];
+    }
+  }
+
+  // 3. Stretch the ink region [ink_min, ink_max] to fill [0, content_width-1].
+  //    Each output pixel is linearly remapped from the source ink range.
+  float const scale = static_cast<float>(ink_max - ink_min)
+                       / static_cast<float>(content_width - 1);
+
+  // Clear the content area to transparent first.
+  for (uint32_t y = 0; y < content_height; ++y) {
+    for (uint32_t x = 0; x < content_width; ++x) {
+      size_t dst_idx = (static_cast<size_t>(content_y + y) * atlas_width
+                         + static_cast<size_t>(content_x + x)) * 4;
+      buffer[dst_idx + 0] = 0;
+      buffer[dst_idx + 1] = 0;
+      buffer[dst_idx + 2] = 0;
+      buffer[dst_idx + 3] = 0;
+    }
+  }
+
+  // Write stretched pixels.
+  for (uint32_t y = 0; y < content_height; ++y) {
+    for (uint32_t x = 0; x < content_width; ++x) {
+      float src_x_f = ink_min + static_cast<float>(x) * scale;
+      uint32_t src_x = static_cast<uint32_t>(std::round(src_x_f));
+      if (src_x > ink_max) src_x = ink_max;
+
+      size_t src_idx = (static_cast<size_t>(y) * content_width
+                         + static_cast<size_t>(src_x)) * 4;
+      size_t dst_idx = (static_cast<size_t>(content_y + y) * atlas_width
+                         + static_cast<size_t>(content_x + x)) * 4;
+
+      buffer[dst_idx + 0] = temp[src_idx + 0];
+      buffer[dst_idx + 1] = temp[src_idx + 1];
+      buffer[dst_idx + 2] = temp[src_idx + 2];
+      buffer[dst_idx + 3] = temp[src_idx + 3];
+    }
+  }
+}
+
 // Rasterize a single glyph into the staging buffer.
 // Returns true if rasterization produced any output.
 auto rasterize_glyph(IDWriteFactory* factory, IDWriteFontFace1* font_face,
@@ -619,6 +732,14 @@ auto make_glyph_renderer(d3d_device const& device,
                          p->baseline_y,
                          p->design_units_per_em,
                          staging_buffer);
+
+        // Stretch horizontal connector glyphs so they fill the full cell width,
+        // making consecutive dashes, equals signs, etc. connect seamlessly.
+        if (is_horizontal_connector(static_cast<char32_t>(cp))) {
+          stretch_glyph_horizontal(staging_buffer, p->atlas_width,
+                                   slot_x + k_glyph_padding, slot_y + k_glyph_padding,
+                                   p->cell_width, p->cell_height);
+        }
 
         // Precompute UVs for this slot (content area, excluding padding).
         auto& slot = p->glyph_slots[slot_idx];
@@ -1216,6 +1337,15 @@ auto glyph_renderer::ensure_glyph_cached(char32_t cp, d3d_device const& device)
   bool rasterized = try_rasterize(cp);
   if (!rasterized) {
     rasterized = try_rasterize(U'\0');
+  }
+
+  // Stretch horizontal connector glyphs so they fill the full cell width.
+  // The dynamic atlas staging buffer covers exactly one slot, so the content
+  // area starts at (k_glyph_padding, k_glyph_padding) within the buffer.
+  if (rasterized && is_horizontal_connector(cp)) {
+    stretch_glyph_horizontal(staging_buffer, p.slot_width,
+                             k_glyph_padding, k_glyph_padding,
+                             p.cell_width, p.cell_height);
   }
 
   // Upload the slot region to the dynamic atlas texture.
