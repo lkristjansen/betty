@@ -1,4 +1,5 @@
 add_library(platform STATIC
+    box_drawing.cpp
     error.cpp
     window.cpp
     gfx.cpp
