@@ -33,6 +33,7 @@ private:
   void on_char(uint32_t codepoint);
   void on_resize(uint32_t width, uint32_t height, bool completed);
   void on_config_changed();
+  void apply_config_all(betty_config const& cfg);
 
   platform::win32_window window_;
   platform::renderer_context renderer_ctx_;

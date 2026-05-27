@@ -64,14 +64,45 @@ void application::on_resize(uint32_t width, uint32_t height, bool completed) {
 }
 
 // ===========================================================================
-// on_config_changed — hot-reload handler
+// on_config_changed — hot-reload handler with error recovery
 // ===========================================================================
 
 void application::on_config_changed() {
+  auto const config_path = config_dir_ / "config.toml";
+
+  // --- File deleted: silent revert to defaults ---
+  if (!std::filesystem::exists(config_path)) {
+    betty_config const defaults{};
+    apply_config_all(defaults);
+    config_ = defaults;
+    return;
+  }
+
+  // --- File exists — try to parse ---
   auto result = parse_config(config_dir_);
+
+  // --- Parse or validation error ---
+  if (!result.errors.empty()) {
+    bool const is_syntax = (result.errors[0].key == "(syntax)");
+    if (is_syntax) {
+      betty::platform::show_error_message(
+          "betty - Configuration Error",
+          result.errors[0].message);
+    } else {
+      auto msg = betty::format_validation_errors(result.errors);
+      betty::platform::show_error_message("betty - Configuration Error", msg);
+    }
+
+    // Revert ALL settings to built-in defaults.
+    betty_config const defaults{};
+    apply_config_all(defaults);
+    config_ = defaults;
+    return;
+  }
+
+  // --- Valid config — apply changed fields (C9 logic) ---
   auto const& new_cfg = result.config;
 
-  // Font changes.
   if (new_cfg.font_family != config_.font_family ||
       new_cfg.font_size != config_.font_size) {
     auto const family = *new_cfg.font_family;
@@ -84,18 +115,15 @@ void application::on_config_changed() {
     config_.font_size = size;
   }
 
-  // cursor_style — update stored value (read every frame).
   if (new_cfg.cursor_style != config_.cursor_style) {
     config_.cursor_style = new_cfg.cursor_style;
   }
 
-  // scrollback_lines.
   if (new_cfg.scrollback_lines != config_.scrollback_lines) {
     session_.resize_scrollback(*new_cfg.scrollback_lines);
     config_.scrollback_lines = new_cfg.scrollback_lines;
   }
 
-  // columns / rows.
   bool const cols_changed = (new_cfg.columns != config_.columns);
   bool const rows_changed = (new_cfg.rows != config_.rows);
   if (cols_changed || rows_changed) {
@@ -119,6 +147,30 @@ void application::on_config_changed() {
   }
 
   // shell: silently ignored (requires restart).
+}
+
+// ===========================================================================
+// apply_config_all — apply all fields unconditionally (revert to defaults)
+// ===========================================================================
+
+void application::apply_config_all(betty_config const& cfg) {
+  if (auto res = renderer_ctx_.recreate_font(*cfg.font_family, *cfg.font_size); !res) {
+    util::log_error(res.error(), "hot-reload: recreate font");
+  }
+
+  session_.resize_scrollback(*cfg.scrollback_lines);
+
+  uint32_t const cell_w = renderer_ctx_.cell_width();
+  uint32_t const cell_h = renderer_ctx_.cell_height();
+  uint32_t const pad = platform::k_padding_px;
+  auto const exact_size = compute_window_size(*cfg.columns, *cfg.rows,
+                                                cell_w, cell_h, pad);
+
+  window_.resize_client_area(exact_size.width, exact_size.height);
+  if (auto res = renderer_ctx_.handle_resize(exact_size.width, exact_size.height); !res) {
+    util::log_error(res.error(), "hot-reload: revert resize");
+  }
+  session_.resize(*cfg.columns, *cfg.rows);
 }
 
 // ===========================================================================

@@ -30,6 +30,13 @@ config_watcher::config_watcher(std::filesystem::path config_dir,
         changed->store(true, std::memory_order_release);
         last_write = current_write;
       }
+
+      // Detect: file was deleted.
+      bool const existed_before = (last_write != std::filesystem::file_time_type{});
+      if (!exists && existed_before) {
+        changed->store(true, std::memory_order_release);
+        last_write = std::filesystem::file_time_type{};
+      }
       // File deletion alone does NOT clear the flag — the main thread
       // will handle that when it tries to re-parse and gets a missing
       // file (C10).  We update last_write so a subsequent re-creation
