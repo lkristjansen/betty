@@ -115,10 +115,13 @@ int application::run() {
     auto const cells = session_.render_cells();
     if (!cells.empty()) {
       platform::size2d const dims{session_.cols(), session_.rows()};
-      // Suppress cursor when scrolled back.
-      auto const cursor = session_.is_following_output()
-          ? std::optional<platform::point2d>{}
-          : std::optional<platform::point2d>{{session_.cursor_row(), session_.cursor_col()}};
+      // Cursor visibility: suppressed when cursor_style is "none",
+      // or when scrolled back looking at history.
+      auto const cursor = [&]() -> std::optional<platform::point2d> {
+        if (config_.cursor_style == "none") return std::nullopt;
+        if (!session_.is_following_output()) return std::nullopt;
+        return platform::point2d{session_.cursor_row(), session_.cursor_col()};
+      }();
       if (auto draw_result = renderer_ctx_.draw_grid(cells, dims, cursor, platform::k_padding_px);
           !draw_result) {
         util::log_error(draw_result.error(), "draw grid");
