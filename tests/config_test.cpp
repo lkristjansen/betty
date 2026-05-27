@@ -1,4 +1,5 @@
 #include <catch2/catch_test_macros.hpp>
+#include "application.hpp"
 #include "config/config.hpp"
 #include <filesystem>
 #include <fstream>
@@ -349,4 +350,26 @@ TEST_CASE("format_validation_errors — single error produces message", "[config
     CHECK(!msg.empty());
     CHECK(msg.find("cursor_style") != std::string::npos);
     CHECK(msg.find("bad value") != std::string::npos);
+}
+
+// ===========================================================================
+// compute_window_size
+// ===========================================================================
+
+TEST_CASE("compute_window_size — standard dimensions", "[config][wiring]") {
+    auto dims = betty::compute_window_size(120, 40, 10, 20, 8);
+    CHECK(dims.width == 120 * 10 + 16);   // 1216
+    CHECK(dims.height == 40 * 20 + 16);   // 816
+}
+
+TEST_CASE("compute_window_size — minimum dimensions", "[config][wiring]") {
+    auto dims = betty::compute_window_size(1, 1, 8, 16, 4);
+    CHECK(dims.width == 1 * 8 + 8);    // 16
+    CHECK(dims.height == 1 * 16 + 8);  // 24
+}
+
+TEST_CASE("compute_window_size — zero padding", "[config][wiring]") {
+    auto dims = betty::compute_window_size(80, 24, 10, 20, 0);
+    CHECK(dims.width == 80 * 10);   // 800
+    CHECK(dims.height == 24 * 20);  // 480
 }

@@ -77,6 +77,10 @@ struct win32_window {
   auto set_min_window_size(uint32_t client_width, uint32_t client_height) -> void;
   [[nodiscard]] auto get_client_size() const -> window_dimensions;
 
+  // Resize the client area to the given pixel dimensions (preserves Z-order
+  // and position).  Uses SetWindowPos internally.
+  auto resize_client_area(uint32_t client_width, uint32_t client_height) -> void;
+
 private:
   [[nodiscard]] auto as_hwnd() const noexcept -> void* { return handle_; }
 

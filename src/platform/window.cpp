@@ -334,4 +334,21 @@ auto win32_window::get_client_size() const -> window_dimensions {
   return default_window_size;
 }
 
+// --- resize_client_area ----------------------------------------------------
+
+auto win32_window::resize_client_area(uint32_t client_width,
+                                       uint32_t client_height) -> void {
+  HWND hwnd = static_cast<HWND>(handle_);
+  if (!hwnd || !IsWindow(hwnd)) return;
+
+  RECT rect{0, 0, static_cast<LONG>(client_width), static_cast<LONG>(client_height)};
+  DWORD const style = static_cast<DWORD>(GetWindowLongPtrW(hwnd, GWL_STYLE));
+  if (AdjustWindowRectEx(&rect, style, FALSE, 0)) {
+    SetWindowPos(hwnd, nullptr,
+                 0, 0,
+                 rect.right - rect.left, rect.bottom - rect.top,
+                 SWP_NOZORDER | SWP_NOACTIVATE | SWP_NOMOVE);
+  }
+}
+
 } // namespace betty::platform

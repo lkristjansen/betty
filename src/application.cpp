@@ -18,16 +18,12 @@ namespace betty {
 
 application::application(platform::win32_window window,
                          platform::renderer_context renderer_ctx,
-                         terminal::terminal_session session)
+                         terminal::terminal_session session,
+                         betty_config config)
     : window_(std::move(window))
     , renderer_ctx_(std::move(renderer_ctx))
-    , session_(std::move(session)) {
-  // NOTE: the OSC window-title observer is installed in run(), not here.
-  // `application` may be moved (e.g. through the std::expected returned by
-  // make_application) between construction and run(); capturing `this` here
-  // would leave the observer pointing at a moved-from object, so the title
-  // updates would silently fire against a dangling window_ reference.
-}
+    , session_(std::move(session))
+    , config_(std::move(config)) {}
 
 // ===========================================================================
 // callback handlers
@@ -90,9 +86,7 @@ int application::run() {
       on_resize(width, height, completed);
     });
 
-  // Forward OSC window-title changes to the title bar.  Installed here
-  // (not in the constructor) because `this` must refer to the final,
-  // post-move address of the application.
+  // Forward OSC window-title changes to the title bar.
   session_.set_observer([this](std::string_view title) {
     window_.set_window_title(title);
   });
@@ -143,7 +137,6 @@ int application::run() {
   // Send exit command to the shell before it is destroyed.
   session_.shutdown();
 
-  // shell_ goes out of scope via terminal_session destruction.
   return exit_code;
 }
 
@@ -151,8 +144,11 @@ int application::run() {
 // make_application
 // ===========================================================================
 
-auto make_application() -> std::expected<application, std::error_code> {
-  // 1. Create window.
+auto make_application(betty_config const& cfg)
+    -> std::expected<application, std::error_code> {
+
+  // 1. Create window at a reasonable default size.
+  //    We'll resize to the exact grid dimensions after creating the renderer.
   auto window_result = platform::make_window(
     platform::window_settings{
       .size = platform::default_window_size,
@@ -165,26 +161,37 @@ auto make_application() -> std::expected<application, std::error_code> {
   }
   auto window = std::move(*window_result);
 
-  // 2. Create renderer context (device, swap chain, RTV, glyph renderer).
-  auto renderer_ctx_result = platform::make_renderer_context(window, "Consolas", 14.0f);
+  // 2. Create renderer context with configured font.
+  auto renderer_ctx_result = platform::make_renderer_context(
+      window, *cfg.font_family, *cfg.font_size);
   if (!renderer_ctx_result) {
     util::show_fatal_error(renderer_ctx_result.error(), "create renderer context");
     return std::unexpected(renderer_ctx_result.error());
   }
   auto renderer_ctx = std::move(*renderer_ctx_result);
 
-  // 3. Compute initial terminal dimensions (accounting for padding).
+  // 3. Resize window to match configured columns × rows.
   uint32_t const cell_w = renderer_ctx.cell_width();
   uint32_t const cell_h = renderer_ctx.cell_height();
   uint32_t const pad = platform::k_padding_px;
-  uint32_t const cols = (platform::default_window_size.width - 2 * pad) / cell_w;
-  uint32_t const rows = (platform::default_window_size.height - 2 * pad) / cell_h;
 
-  // 4. Create shell (non-fatal: app runs without shell if it fails).
+  uint32_t const cfg_cols = *cfg.columns;
+  uint32_t const cfg_rows = *cfg.rows;
+
+  auto const exact_size = compute_window_size(cfg_cols, cfg_rows, cell_w, cell_h, pad);
+  window.resize_client_area(exact_size.width, exact_size.height);
+
+  // Notify the renderer of the new size so the constant buffer matches.
+  if (auto res = renderer_ctx.handle_resize(exact_size.width, exact_size.height); !res) {
+    return std::unexpected(res.error());
+  }
+
+  // 4. Create shell with configured command line and grid dimensions.
   std::optional<platform::shell> shell;
   auto shell_result = platform::make_shell(platform::shell_settings{
-    .cols = cols,
-    .rows = rows
+    .cols = cfg_cols,
+    .rows = cfg_rows,
+    .command_line = *cfg.shell
   });
   if (shell_result) {
     shell = std::move(*shell_result);
@@ -192,16 +199,18 @@ auto make_application() -> std::expected<application, std::error_code> {
     util::log_error(shell_result.error(), "Failed to create shell process");
   }
 
-  // 5. Set minimum window size with padding accounted for.
+  // 5. Set minimum window size.
   uint32_t const min_win_width  = k_min_columns * cell_w + 2 * pad;
   uint32_t const min_win_height = k_min_rows * cell_h + 2 * pad;
   window.set_min_window_size(min_win_width, min_win_height);
 
-  // 6. Create terminal session.
-  constexpr uint32_t k_default_scrollback = 10000;
-  terminal::terminal_session session(cols, rows, k_default_scrollback, std::move(shell));
+  // 6. Create terminal session with configured scrollback and dimensions.
+  terminal::terminal_session session(cfg_cols, cfg_rows,
+                                      *cfg.scrollback_lines,
+                                      std::move(shell));
 
-  return application{std::move(window), std::move(renderer_ctx), std::move(session)};
+  return application{std::move(window), std::move(renderer_ctx),
+                     std::move(session), cfg};
 }
 
 } // namespace betty

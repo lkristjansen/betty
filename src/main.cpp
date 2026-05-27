@@ -31,7 +31,7 @@ int main() {
 
   // (cfg is not yet wired — C6 will pass it into make_application.)
 
-  auto app = betty::make_application();
+  auto app = betty::make_application(cfg);
   if (!app) return 1;
   return app->run();
 }
