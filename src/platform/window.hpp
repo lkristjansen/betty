@@ -92,6 +92,8 @@ private:
     -> std::expected<win32_window, std::error_code>;
   friend auto make_swap_chain(struct d3d_device const&, win32_window const&, struct swap_chain_settings const&)
     -> std::expected<struct d3d_swap_chain, std::error_code>;
+  friend auto make_renderer_context(win32_window const&, std::string_view, float)
+    -> std::expected<class renderer_context, std::error_code>;
 };
 
 [[nodiscard]] auto make_window(window_settings const& settings)

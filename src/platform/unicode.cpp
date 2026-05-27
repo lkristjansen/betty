@@ -1,4 +1,5 @@
 #include "unicode.hpp"
+#include "error.hpp"
 
 #include <array>
 #include <span>
@@ -51,6 +52,27 @@ char32_t nfc_compose(char32_t base, char32_t combining) noexcept {
   return 0x10000
     + ((static_cast<char32_t>(composed[0]) - 0xD800) << 10)
     + (static_cast<char32_t>(composed[1]) - 0xDC00);
+}
+
+// ===========================================================================
+// widen — UTF-8 → UTF-16
+// ===========================================================================
+
+auto widen(std::string_view sv) -> std::expected<std::wstring, std::error_code> {
+  if (sv.empty()) return std::wstring{};
+  int needed = MultiByteToWideChar(CP_UTF8, 0, sv.data(),
+                                    static_cast<int>(sv.size()), nullptr, 0);
+  if (needed <= 0) {
+    return std::unexpected(make_win32_error());
+  }
+  std::wstring result(needed, L'\0');
+  int converted = MultiByteToWideChar(CP_UTF8, 0, sv.data(),
+                                       static_cast<int>(sv.size()), result.data(), needed);
+  if (converted <= 0) {
+    return std::unexpected(make_win32_error());
+  }
+  result.resize(static_cast<size_t>(converted));
+  return result;
 }
 
 } // namespace betty::platform

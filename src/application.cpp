@@ -166,7 +166,7 @@ auto make_application() -> std::expected<application, std::error_code> {
   auto window = std::move(*window_result);
 
   // 2. Create renderer context (device, swap chain, RTV, glyph renderer).
-  auto renderer_ctx_result = platform::make_renderer_context(window);
+  auto renderer_ctx_result = platform::make_renderer_context(window, "Consolas", 14.0f);
   if (!renderer_ctx_result) {
     util::show_fatal_error(renderer_ctx_result.error(), "create renderer context");
     return std::unexpected(renderer_ctx_result.error());

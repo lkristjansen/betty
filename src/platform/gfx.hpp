@@ -50,7 +50,9 @@ private:
   friend auto make_render_target_view(d3d_device const&, d3d_swap_chain const&)
     -> std::expected<d3d_render_target_view, std::error_code>;
   friend struct glyph_renderer;  // needs impl_->context for drawing
-  friend auto make_glyph_renderer(d3d_device const&, window_dimensions const&)
+  friend auto make_glyph_renderer(d3d_device const&,
+                                    std::string_view, float, uint32_t,
+                                    window_dimensions const&)
     -> std::expected<glyph_renderer, std::error_code>;  // needs impl_->device / context
   friend auto resize_swap_chain(d3d_device const&, d3d_swap_chain&,
                                 d3d_render_target_view, window_dimensions)

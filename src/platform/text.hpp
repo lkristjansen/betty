@@ -75,15 +75,23 @@ private:
   [[nodiscard]] auto ensure_glyph_cached(char32_t cp, struct d3d_device const& device)
       -> uint32_t;
 
-  friend auto make_glyph_renderer(d3d_device const&, window_dimensions const&)
+  friend auto make_glyph_renderer(d3d_device const&,
+                                    std::string_view, float, uint32_t,
+                                    window_dimensions const&)
     -> std::expected<glyph_renderer, std::error_code>;
 };
 
 // --- factory ----------------------------------------------------------------
 
 // Creates the glyph renderer. The device is needed for texture/buffer creation.
-// The window dimensions are used for the constant buffer's orthographic transform.
-[[nodiscard]] auto make_glyph_renderer(d3d_device const& device, window_dimensions const& window_size)
+// The font_family and font_size_pt specify the typeface and logical point size.
+// dpi is used to convert pt to physical pixels. The window dimensions are used
+// for the constant buffer's orthographic transform.
+[[nodiscard]] auto make_glyph_renderer(d3d_device const& device,
+                                        std::string_view font_family,
+                                        float font_size_pt,
+                                        uint32_t dpi,
+                                        window_dimensions const& window_size)
   -> std::expected<glyph_renderer, std::error_code>;
 
 } // namespace betty::platform

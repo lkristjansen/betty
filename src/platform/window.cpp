@@ -1,6 +1,7 @@
 #include "window.hpp"
 #include "error.hpp"
 #include "types.hpp"
+#include "unicode.hpp"
 #include <windows.h>
 #include <string>
 
@@ -147,24 +148,6 @@ LRESULT CALLBACK WndProc(HWND hwnd, UINT msg, WPARAM wParam, LPARAM lParam) {
   default:
     return DefWindowProcW(hwnd, msg, wParam, lParam);
   }
-}
-
-// UTF-8 → UTF-16 converter.
-auto widen(std::string_view sv) -> std::expected<std::wstring, std::error_code> {
-  if (sv.empty()) return std::wstring{};
-  int needed = MultiByteToWideChar(CP_UTF8, 0, sv.data(),
-                                    static_cast<int>(sv.size()), nullptr, 0);
-  if (needed <= 0) {
-    return std::unexpected(make_win32_error());
-  }
-  std::wstring result(needed, L'\0');
-  int converted = MultiByteToWideChar(CP_UTF8, 0, sv.data(),
-                                       static_cast<int>(sv.size()), result.data(), needed);
-  if (converted <= 0) {
-    return std::unexpected(make_win32_error());
-  }
-  result.resize(static_cast<size_t>(converted));
-  return result;
 }
 
 } // anonymous namespace

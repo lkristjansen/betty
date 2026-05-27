@@ -3,6 +3,7 @@
 #include "gfx_impl.hpp"
 #include "error.hpp"
 #include "debug_print.hpp"
+#include "unicode.hpp"
 #include "terminal/types.hpp"
 #include <d3d11.h>
 #include <d3dcompiler.h>
@@ -26,7 +27,6 @@ namespace betty::platform {
 // Constants
 // ===========================================================================
 
-inline constexpr uint32_t k_font_size_px        = 18u;   // raster font size used everywhere
 inline constexpr uint32_t k_max_glyphs_per_frame = 65536u; // safe for any reasonable terminal size
 inline constexpr uint32_t k_vertices_per_quad    = 4u;
 inline constexpr uint32_t k_indices_per_quad     = 6u;
@@ -181,6 +181,7 @@ struct glyph_renderer::impl {
   // Font metrics
   uint32_t cell_width            = 0;
   uint32_t cell_height           = 0;
+  uint32_t font_size_px          = 0;   // raster font size in pixels (converted from pt)
   float    baseline_y            = 0.0f;  // distance from cell top to baseline (px)
   uint32_t design_units_per_em   = 0;     // font design units per em
 
@@ -268,7 +269,8 @@ auto compile_shader(const char* source, const char* entry_point, const char* tar
 }
 
 // Get the font face (v1 interface) and metrics from the text format.
-auto init_font_face(IDWriteFactory* factory, IDWriteTextFormat* format,
+auto init_font_face(IDWriteFactory* factory, const wchar_t* font_family,
+                    IDWriteTextFormat* format,
                     uint32_t& cell_width, uint32_t& cell_height,
                     ComPtr<IDWriteFontFace1>& font_face,
                     uint32_t& font_ascent, uint32_t& font_design_units_per_em) -> HRESULT {
@@ -279,16 +281,16 @@ auto init_font_face(IDWriteFactory* factory, IDWriteTextFormat* format,
 
   UINT32 family_index = 0;
   BOOL   exists = FALSE;
-  hr = font_collection->FindFamilyName(L"Consolas", &family_index, &exists);
+  hr = font_collection->FindFamilyName(font_family, &family_index, &exists);
   if (FAILED(hr)) return hr;
   if (!exists) return E_FAIL;
 
-  ComPtr<IDWriteFontFamily> font_family;
-  hr = font_collection->GetFontFamily(family_index, font_family.GetAddressOf());
+  ComPtr<IDWriteFontFamily> dw_font_family;
+  hr = font_collection->GetFontFamily(family_index, dw_font_family.GetAddressOf());
   if (FAILED(hr)) return hr;
 
   ComPtr<IDWriteFont> font;
-  hr = font_family->GetFont(0, font.GetAddressOf());
+  hr = dw_font_family->GetFont(0, font.GetAddressOf());
   if (FAILED(hr)) return hr;
 
   // Get IDWriteFontFace, then query for IDWriteFontFace1.
@@ -466,7 +468,11 @@ auto rasterize_glyph(IDWriteFactory* factory, IDWriteFontFace1* font_face,
 // make_glyph_renderer
 // ===========================================================================
 
-auto make_glyph_renderer(d3d_device const& device, window_dimensions const& window_size)
+auto make_glyph_renderer(d3d_device const& device,
+                         std::string_view font_family,
+                         float font_size_pt,
+                         uint32_t dpi,
+                         window_dimensions const& window_size)
   -> std::expected<glyph_renderer, std::error_code> {
 
   auto* d3d_dev  = device.impl_->device.Get();
@@ -474,7 +480,16 @@ auto make_glyph_renderer(d3d_device const& device, window_dimensions const& wind
 
   auto p = std::make_unique<glyph_renderer::impl>();
 
-  constexpr float k_font_size = static_cast<float>(k_font_size_px);
+  // Convert pt → px using the window's DPI.
+  uint32_t const font_size_px = static_cast<uint32_t>(
+      std::lround(font_size_pt * static_cast<float>(dpi) / 72.0f));
+  p->font_size_px = font_size_px;
+  float const k_font_size = static_cast<float>(font_size_px);
+
+  // Widen the font family name from UTF-8 to UTF-16.
+  auto wide_family_result = widen(font_family);
+  if (!wide_family_result) return std::unexpected(wide_family_result.error());
+  auto const& wide_family = *wide_family_result;
 
   // --- 1. Create DWrite factory ---------------------------------------------
   HRESULT hr = DWriteCreateFactory(
@@ -486,7 +501,7 @@ auto make_glyph_renderer(d3d_device const& device, window_dimensions const& wind
 
   // --- 2. Create text format ------------------------------------------------
   hr = p->dwrite_factory->CreateTextFormat(
-    L"Consolas", nullptr,
+    wide_family.c_str(), nullptr,
     DWRITE_FONT_WEIGHT_NORMAL,
     DWRITE_FONT_STYLE_NORMAL,
     DWRITE_FONT_STRETCH_NORMAL,
@@ -499,7 +514,8 @@ auto make_glyph_renderer(d3d_device const& device, window_dimensions const& wind
   // --- 3. Get font face & metrics -------------------------------------------
   uint32_t font_ascent = 0;
   uint32_t font_design_units_per_em = 0;
-  hr = init_font_face(p->dwrite_factory.Get(), p->text_format.Get(),
+  hr = init_font_face(p->dwrite_factory.Get(), wide_family.c_str(),
+                       p->text_format.Get(),
                        p->cell_width, p->cell_height,
                        p->font_face,
                        font_ascent, font_design_units_per_em);
@@ -520,7 +536,7 @@ auto make_glyph_renderer(d3d_device const& device, window_dimensions const& wind
 
     UINT32 family_index = 0;
     BOOL exists = FALSE;
-    hr = font_collection->FindFamilyName(L"Consolas", &family_index, &exists);
+    hr = font_collection->FindFamilyName(wide_family.c_str(), &family_index, &exists);
     if (FAILED(hr)) return std::unexpected(make_hresult_error(hr));
 
     if (exists) {
@@ -1195,7 +1211,7 @@ auto glyph_renderer::ensure_glyph_cached(char32_t cp, d3d_device const& device)
                              static_cast<size_t>(p.slot_height);
   std::vector<uint8_t> staging_buffer(buf_pixels * 4, 0);
 
-  constexpr float k_font_size = static_cast<float>(k_font_size_px);
+  float const k_font_size = static_cast<float>(p.font_size_px);
 
   // Pass slot origin (0, 0) — since the staging buffer is only one slot,
   // absolute positions would overflow.  origin_x/y computed inside

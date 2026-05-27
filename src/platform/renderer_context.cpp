@@ -1,6 +1,7 @@
 #include "renderer_context.hpp"
 #include "window.hpp"
 #include "util/log.hpp"
+#include <windows.h>
 
 namespace betty::platform {
 
@@ -83,7 +84,9 @@ auto renderer_context::cell_height() const -> uint32_t {
 // Factory
 // ===========================================================================
 
-auto make_renderer_context(win32_window const& window)
+auto make_renderer_context(win32_window const& window,
+                            std::string_view font_family,
+                            float font_size_pt)
     -> std::expected<renderer_context, std::error_code> {
 
   // 1. Create D3D11 device.
@@ -112,8 +115,11 @@ auto make_renderer_context(win32_window const& window)
   }
   auto rtv = std::move(*rtv_result);
 
-  // 5. Create glyph renderer.
-  auto renderer_result = make_glyph_renderer(device, size);
+  // 5. Query DPI from the window for pt→px conversion.
+  uint32_t const dpi = GetDpiForWindow(static_cast<HWND>(window.as_hwnd()));
+
+  // 6. Create glyph renderer.
+  auto renderer_result = make_glyph_renderer(device, font_family, font_size_pt, dpi, size);
   if (!renderer_result) {
     return std::unexpected(renderer_result.error());
   }

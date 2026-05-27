@@ -63,14 +63,16 @@ private:
   d3d_render_target_view rtv_;
   glyph_renderer renderer_;
 
-  friend auto make_renderer_context(win32_window const&)
+  friend auto make_renderer_context(win32_window const&, std::string_view, float)
       -> std::expected<renderer_context, std::error_code>;
 };
 
 // Create a renderer_context for the given window.
 // Internally creates the device, swap chain, RTV, and glyph renderer.
 // Returns std::unexpected on any fatal failure.
-[[nodiscard]] auto make_renderer_context(win32_window const& window)
+[[nodiscard]] auto make_renderer_context(win32_window const& window,
+                                         std::string_view font_family,
+                                         float font_size_pt)
     -> std::expected<renderer_context, std::error_code>;
 
 } // namespace betty::platform
