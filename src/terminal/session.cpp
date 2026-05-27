@@ -23,8 +23,9 @@ namespace {
 // ===========================================================================
 
 terminal_session::terminal_session(uint32_t cols, uint32_t rows,
+                                   uint32_t scrollback_max_lines,
                                    std::optional<platform::shell> shell)
-    : grid_(cols, rows)
+    : grid_(cols, rows, scrollback_max_lines)
     , shell_(std::move(shell))
     , input_() {
   if (!shell_) {

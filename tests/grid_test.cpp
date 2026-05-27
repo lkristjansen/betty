@@ -5,6 +5,8 @@
 
 using namespace betty::terminal;
 
+constexpr uint32_t k_test_scrollback = 10000;
+
 // Helper: feed raw bytes through a VT parser and apply actions to the grid.
 static void write_bytes(terminal_grid& g, std::string_view data) {
   vt_parser p;
@@ -20,19 +22,19 @@ static void write_bytes(terminal_grid& g, std::string_view data) {
 // ===========================================================================
 
 TEST_CASE("Grid — construction sets dimensions", "[grid][construction]") {
-    terminal_grid g(80, 24);
+    terminal_grid g(80, 24, k_test_scrollback);
     CHECK(g.cols() == 80);
     CHECK(g.rows() == 24);
 }
 
 TEST_CASE("Grid — cursor starts at (0,0)", "[grid][construction]") {
-    terminal_grid g(80, 24);
+    terminal_grid g(80, 24, k_test_scrollback);
     CHECK(g.cursor_col() == 0);
     CHECK(g.cursor_row() == 0);
 }
 
 TEST_CASE("Grid — all cells initialised to space", "[grid][construction]") {
-    terminal_grid g(5, 3);
+    terminal_grid g(5, 3, k_test_scrollback);
     for (uint32_t r = 0; r < 3; ++r) {
         for (uint32_t c = 0; c < 5; ++c) {
             CHECK(g.cell(r, c).codepoint == U' ');
@@ -41,7 +43,7 @@ TEST_CASE("Grid — all cells initialised to space", "[grid][construction]") {
 }
 
 TEST_CASE("Grid — zero-size grid", "[grid][edge]") {
-    terminal_grid g(0, 0);
+    terminal_grid g(0, 0, k_test_scrollback);
     CHECK(g.cols() == 0);
     CHECK(g.rows() == 0);
     CHECK(g.cursor_col() == 0);
@@ -53,7 +55,7 @@ TEST_CASE("Grid — zero-size grid", "[grid][edge]") {
 // ===========================================================================
 
 TEST_CASE("Grid — write_char places codepoint and advances cursor", "[grid][write_char]") {
-    terminal_grid g(10, 5);
+    terminal_grid g(10, 5, k_test_scrollback);
     g.write_char(U'a');
     CHECK(g.cell(0, 0).codepoint == U'a');
     CHECK(g.cursor_col() == 1);
@@ -61,7 +63,7 @@ TEST_CASE("Grid — write_char places codepoint and advances cursor", "[grid][wr
 }
 
 TEST_CASE("Grid — write_char multiple chars fill row", "[grid][write_char]") {
-    terminal_grid g(3, 3);
+    terminal_grid g(3, 3, k_test_scrollback);
     g.write_char(U'a');
     g.write_char(U'b');
     g.write_char(U'c');
@@ -78,7 +80,7 @@ TEST_CASE("Grid — write_char multiple chars fill row", "[grid][write_char]") {
 // ===========================================================================
 
 TEST_CASE("Grid — write_char wraps at column boundary", "[grid][write_char][wrap]") {
-    terminal_grid g(2, 3);
+    terminal_grid g(2, 3, k_test_scrollback);
     g.write_char(U'a');  // col 0 → col 1
     g.write_char(U'b');  // col 1 → col 2 (past end, wraps to row 1 col 0)
     CHECK(g.cell(0, 0).codepoint == U'a');
@@ -88,7 +90,7 @@ TEST_CASE("Grid — write_char wraps at column boundary", "[grid][write_char][wr
 }
 
 TEST_CASE("Grid — write_char after wrap places on next row", "[grid][write_char][wrap]") {
-    terminal_grid g(2, 3);
+    terminal_grid g(2, 3, k_test_scrollback);
     g.write_char(U'a');  // (0,0), cursor → (0,1)
     g.write_char(U'b');  // (0,1), cursor wraps → (1,0)
     g.write_char(U'c');  // (1,0), cursor → (1,1)
@@ -105,7 +107,7 @@ TEST_CASE("Grid — write_char after wrap places on next row", "[grid][write_cha
 // ===========================================================================
 
 TEST_CASE("Grid — write_char scrolls when past last row", "[grid][write_char][scroll]") {
-    terminal_grid g(2, 2);
+    terminal_grid g(2, 2, k_test_scrollback);
     g.write_char(U'a');  // (0,0), cursor → (0,1)
     g.write_char(U'b');  // (0,1), cursor wraps → (1,0)
     g.write_char(U'c');  // (1,0), cursor → (1,1)
@@ -124,7 +126,7 @@ TEST_CASE("Grid — write_char scrolls when past last row", "[grid][write_char][
 // ===========================================================================
 
 TEST_CASE("Grid — newline moves to next row column 0", "[grid][newline]") {
-    terminal_grid g(10, 5);
+    terminal_grid g(10, 5, k_test_scrollback);
     g.write_char(U'x');
     g.newline();
     CHECK(g.cursor_col() == 0);
@@ -132,7 +134,7 @@ TEST_CASE("Grid — newline moves to next row column 0", "[grid][newline]") {
 }
 
 TEST_CASE("Grid — newline at last row scrolls", "[grid][newline][scroll]") {
-    terminal_grid g(3, 2);
+    terminal_grid g(3, 2, k_test_scrollback);
     g.write_char(U'a');  // (0,0)
     g.write_char(U'b');  // (0,1)
     g.newline();         // → (1,0)
@@ -155,7 +157,7 @@ TEST_CASE("Grid — newline at last row scrolls", "[grid][newline][scroll]") {
 
 TEST_CASE("Grid — pending-wrap: \\r\\n after auto-wrap does not double-advance", "[grid][pending_wrap]") {
     // Simulate shell output filling exactly one line and then sending \r\n.
-    terminal_grid g(3, 3);
+    terminal_grid g(3, 3, k_test_scrollback);
     // Fill the last cell to trigger auto-wrap.
     g.write_char(U'a');  // (0,0) → (0,1)
     g.write_char(U'b');  // (0,1) → (0,2)
@@ -174,7 +176,7 @@ TEST_CASE("Grid — pending-wrap: \\r\\n after auto-wrap does not double-advance
 }
 
 TEST_CASE("Grid — pending-wrap: subsequent write after auto-wrap works", "[grid][pending_wrap]") {
-    terminal_grid g(3, 3);
+    terminal_grid g(3, 3, k_test_scrollback);
     // Trigger auto-wrap.
     g.write_char(U'a');  // (0,0) → (0,1)
     g.write_char(U'b');  // (0,1) → (0,2)
@@ -189,7 +191,7 @@ TEST_CASE("Grid — pending-wrap: subsequent write after auto-wrap works", "[gri
 }
 
 TEST_CASE("Grid — pending-wrap: \\n alone after auto-wrap does not double-advance", "[grid][pending_wrap]") {
-    terminal_grid g(3, 3);
+    terminal_grid g(3, 3, k_test_scrollback);
     // Trigger auto-wrap.
     g.write_char(U'a');
     g.write_char(U'b');
@@ -206,7 +208,7 @@ TEST_CASE("Grid — pending-wrap: \\n alone after auto-wrap does not double-adva
 }
 
 TEST_CASE("Grid — pending-wrap: \\r\\n without prior auto-wrap advances normally", "[grid][pending_wrap]") {
-    terminal_grid g(3, 3);
+    terminal_grid g(3, 3, k_test_scrollback);
     g.write_char(U'a');  // (0,0) → (0,1)
     // No auto-wrap triggered.
     write_bytes(g, "\r\n");
@@ -216,7 +218,7 @@ TEST_CASE("Grid — pending-wrap: \\r\\n without prior auto-wrap advances normal
 }
 
 TEST_CASE("Grid — pending-wrap: cursor movement clears flag", "[grid][pending_wrap]") {
-    terminal_grid g(5, 5);
+    terminal_grid g(5, 5, k_test_scrollback);
     // Trigger auto-wrap.
     write_bytes(g, "ABCDE");  // fills row 0, auto-wraps to (1,0)
 
@@ -234,7 +236,7 @@ TEST_CASE("Grid — pending-wrap: cursor movement clears flag", "[grid][pending_
 // ===========================================================================
 
 TEST_CASE("Grid — carriage_return moves to column 0", "[grid][carriage_return]") {
-    terminal_grid g(10, 5);
+    terminal_grid g(10, 5, k_test_scrollback);
     g.write_char(U'a');
     g.write_char(U'b');
     g.write_char(U'c');
@@ -249,7 +251,7 @@ TEST_CASE("Grid — carriage_return moves to column 0", "[grid][carriage_return]
 
 TEST_CASE("Grid — scroll_up shifts rows up and clears bottom row", "[grid][scroll_up]") {
     // Set up a 3×2 grid with row 0 = A B C, row 1 = D E ' '.
-    terminal_grid g(3, 2);
+    terminal_grid g(3, 2, k_test_scrollback);
     g.write_char(U'A'); g.write_char(U'B'); g.write_char(U'C'); // wraps to (1,0)
     g.write_char(U'D'); g.write_char(U'E');                     // (1,0), (1,1)
     // Grid: row0 = A B C, row1 = D E ' '
@@ -264,7 +266,7 @@ TEST_CASE("Grid — scroll_up shifts rows up and clears bottom row", "[grid][scr
 }
 
 TEST_CASE("Grid — scroll_up on single-row grid clears cells", "[grid][scroll_up][edge]") {
-    terminal_grid g(5, 1);
+    terminal_grid g(5, 1, k_test_scrollback);
     g.write_char(U'A'); g.write_char(U'B'); g.write_char(U'C');
     g.scroll_up();
     CHECK(g.cell(0, 0).codepoint == U' ');
@@ -279,7 +281,7 @@ TEST_CASE("Grid — scroll_up on single-row grid clears cells", "[grid][scroll_u
 // ===========================================================================
 
 TEST_CASE("Grid — cell() returns correct codepoint", "[grid][access]") {
-    terminal_grid g(2, 2);
+    terminal_grid g(2, 2, k_test_scrollback);
     g.write_char(U'a');
     CHECK(g.cell(0, 0).codepoint == U'a');
     CHECK(g.cell(0, 1).codepoint == U' ');
@@ -288,7 +290,7 @@ TEST_CASE("Grid — cell() returns correct codepoint", "[grid][access]") {
 }
 
 TEST_CASE("Grid — cell() returns full cell data", "[grid][access]") {
-    terminal_grid g(2, 2);
+    terminal_grid g(2, 2, k_test_scrollback);
     g.write_char(U'a');
     g.write_char(U'b');
     CHECK(g.cell(0, 0).codepoint == U'a');
@@ -302,7 +304,7 @@ TEST_CASE("Grid — cell() returns full cell data", "[grid][access]") {
 // ===========================================================================
 
 TEST_CASE("Grid — write_bytes processes simple text", "[grid][write_bytes]") {
-    terminal_grid g(10, 5);
+    terminal_grid g(10, 5, k_test_scrollback);
     write_bytes(g, "Hello");
     CHECK(g.cell(0, 0).codepoint == U'H');
     CHECK(g.cell(0, 1).codepoint == U'e');
@@ -312,7 +314,7 @@ TEST_CASE("Grid — write_bytes processes simple text", "[grid][write_bytes]") {
 }
 
 TEST_CASE("Grid — write_bytes handles newline", "[grid][write_bytes]") {
-    terminal_grid g(10, 5);
+    terminal_grid g(10, 5, k_test_scrollback);
     write_bytes(g, "AB\nCD");
     CHECK(g.cell(0, 0).codepoint == U'A');
     CHECK(g.cell(0, 1).codepoint == U'B');
@@ -321,7 +323,7 @@ TEST_CASE("Grid — write_bytes handles newline", "[grid][write_bytes]") {
 }
 
 TEST_CASE("Grid — write_bytes handles carriage_return", "[grid][write_bytes]") {
-    terminal_grid g(10, 5);
+    terminal_grid g(10, 5, k_test_scrollback);
     write_bytes(g, "AB\rC");
     CHECK(g.cell(0, 0).codepoint == U'C');  // overwrote A
     CHECK(g.cell(0, 1).codepoint == U'B');
@@ -332,7 +334,7 @@ TEST_CASE("Grid — write_bytes handles carriage_return", "[grid][write_bytes]")
 // ===========================================================================
 
 TEST_CASE("Grid — apply move_cursor", "[grid][apply]") {
-    terminal_grid g(10, 10);
+    terminal_grid g(10, 10, k_test_scrollback);
     action a;
     a.type = action_type::move_cursor;
     a.payload = cursor_pos{5, 7};
@@ -342,7 +344,7 @@ TEST_CASE("Grid — apply move_cursor", "[grid][apply]") {
 }
 
 TEST_CASE("Grid — apply move_cursor clamps to bounds", "[grid][apply][edge]") {
-    terminal_grid g(5, 3);
+    terminal_grid g(5, 3, k_test_scrollback);
     action a;
     a.type = action_type::move_cursor;
     a.payload = cursor_pos{99, 99};
@@ -352,7 +354,7 @@ TEST_CASE("Grid — apply move_cursor clamps to bounds", "[grid][apply][edge]") 
 }
 
 TEST_CASE("Grid — apply move_cursor_up", "[grid][apply]") {
-    terminal_grid g(10, 10);
+    terminal_grid g(10, 10, k_test_scrollback);
     action a;
     a.type = action_type::move_cursor;
     a.payload = cursor_pos{5, 5};
@@ -367,7 +369,7 @@ TEST_CASE("Grid — apply move_cursor_up", "[grid][apply]") {
 }
 
 TEST_CASE("Grid — apply move_cursor_up clamps to 0", "[grid][apply][edge]") {
-    terminal_grid g(10, 10);
+    terminal_grid g(10, 10, k_test_scrollback);
     action a;
     a.type = action_type::move_cursor;
     a.payload = cursor_pos{1, 0};
@@ -381,7 +383,7 @@ TEST_CASE("Grid — apply move_cursor_up clamps to 0", "[grid][apply][edge]") {
 }
 
 TEST_CASE("Grid — apply move_cursor_down", "[grid][apply]") {
-    terminal_grid g(10, 10);
+    terminal_grid g(10, 10, k_test_scrollback);
     action b;
     b.type = action_type::move_cursor_down;
     b.payload = uint32_t{3};
@@ -390,7 +392,7 @@ TEST_CASE("Grid — apply move_cursor_down", "[grid][apply]") {
 }
 
 TEST_CASE("Grid — apply move_cursor_down clamps to last row", "[grid][apply][edge]") {
-    terminal_grid g(10, 3);
+    terminal_grid g(10, 3, k_test_scrollback);
     action b;
     b.type = action_type::move_cursor_down;
     b.payload = uint32_t{99};
@@ -399,7 +401,7 @@ TEST_CASE("Grid — apply move_cursor_down clamps to last row", "[grid][apply][e
 }
 
 TEST_CASE("Grid — apply move_cursor_forward", "[grid][apply]") {
-    terminal_grid g(10, 5);
+    terminal_grid g(10, 5, k_test_scrollback);
     action b;
     b.type = action_type::move_cursor_forward;
     b.payload = uint32_t{4};
@@ -408,7 +410,7 @@ TEST_CASE("Grid — apply move_cursor_forward", "[grid][apply]") {
 }
 
 TEST_CASE("Grid — apply move_cursor_forward clamps to last col", "[grid][apply][edge]") {
-    terminal_grid g(5, 3);
+    terminal_grid g(5, 3, k_test_scrollback);
     action b;
     b.type = action_type::move_cursor_forward;
     b.payload = uint32_t{99};
@@ -417,7 +419,7 @@ TEST_CASE("Grid — apply move_cursor_forward clamps to last col", "[grid][apply
 }
 
 TEST_CASE("Grid — apply move_cursor_back", "[grid][apply]") {
-    terminal_grid g(10, 5);
+    terminal_grid g(10, 5, k_test_scrollback);
     action a;
     a.type = action_type::move_cursor;
     a.payload = cursor_pos{0, 5};
@@ -431,7 +433,7 @@ TEST_CASE("Grid — apply move_cursor_back", "[grid][apply]") {
 }
 
 TEST_CASE("Grid — apply move_cursor_back clamps to 0", "[grid][apply][edge]") {
-    terminal_grid g(10, 5);
+    terminal_grid g(10, 5, k_test_scrollback);
     action b;
     b.type = action_type::move_cursor_back;
     b.payload = uint32_t{99};
@@ -444,7 +446,7 @@ TEST_CASE("Grid — apply move_cursor_back clamps to 0", "[grid][apply][edge]") 
 // ===========================================================================
 
 TEST_CASE("Grid — save_cursor remembers current cursor position", "[grid][cursor_save_restore]") {
-    terminal_grid g(10, 10);
+    terminal_grid g(10, 10, k_test_scrollback);
     action mv;
     mv.type = action_type::move_cursor;
     mv.payload = cursor_pos{5, 7};
@@ -460,7 +462,7 @@ TEST_CASE("Grid — save_cursor remembers current cursor position", "[grid][curs
 }
 
 TEST_CASE("Grid — save_cursor and restore_cursor round-trip", "[grid][cursor_save_restore]") {
-    terminal_grid g(10, 10);
+    terminal_grid g(10, 10, k_test_scrollback);
     // Move to (5, 7).
     action mv;
     mv.type = action_type::move_cursor;
@@ -488,7 +490,7 @@ TEST_CASE("Grid — save_cursor and restore_cursor round-trip", "[grid][cursor_s
 }
 
 TEST_CASE("Grid — restore_cursor clamps to grid bounds", "[grid][cursor_save_restore]") {
-    terminal_grid g(5, 5);
+    terminal_grid g(5, 5, k_test_scrollback);
     // Save default (0, 0).
     action save;
     save.type = action_type::save_cursor;
@@ -504,7 +506,7 @@ TEST_CASE("Grid — restore_cursor clamps to grid bounds", "[grid][cursor_save_r
 }
 
 TEST_CASE("Grid — save/restore via write_bytes (ESC 7 / ESC 8 integration)", "[grid][cursor_save_restore][integration]") {
-    terminal_grid g(10, 10);
+    terminal_grid g(10, 10, k_test_scrollback);
     // Move to (5, 7) then save.
     write_bytes(g, "\x1B[6;8H");  // CUP: row 6, col 8 → 0-based (5, 7)
     write_bytes(g, "\x1B" "7");   // DECSC
@@ -520,7 +522,7 @@ TEST_CASE("Grid — save/restore via write_bytes (ESC 7 / ESC 8 integration)", "
 }
 
 TEST_CASE("Grid — saved cursor is reset after resize", "[grid][cursor_save_restore][resize]") {
-    terminal_grid g(10, 10);
+    terminal_grid g(10, 10, k_test_scrollback);
     // Move to (5, 5) and save.
     action mv;
     mv.type = action_type::move_cursor;
@@ -548,7 +550,7 @@ TEST_CASE("Grid — saved cursor is reset after resize", "[grid][cursor_save_res
 // ===========================================================================
 
 TEST_CASE("Grid — resize to same size is no-op", "[grid][resize]") {
-    terminal_grid g(10, 5);
+    terminal_grid g(10, 5, k_test_scrollback);
     g.write_char(U'X');
     g.resize(10, 5);
     CHECK(g.cols() == 10);
@@ -557,7 +559,7 @@ TEST_CASE("Grid — resize to same size is no-op", "[grid][resize]") {
 }
 
 TEST_CASE("Grid — resize larger preserves content", "[grid][resize]") {
-    terminal_grid g(3, 2);
+    terminal_grid g(3, 2, k_test_scrollback);
     g.write_char(U'a'); g.write_char(U'b'); g.write_char(U'c'); // wraps to (1,0)
     g.write_char(U'd');  // (1,0)
     // Grid: row0 = a b c, row1 = d ' ' ' '
@@ -576,7 +578,7 @@ TEST_CASE("Grid — resize larger preserves content", "[grid][resize]") {
 }
 
 TEST_CASE("Grid — resize smaller truncates content", "[grid][resize]") {
-    terminal_grid g(5, 5);
+    terminal_grid g(5, 5, k_test_scrollback);
     g.write_char(U'a'); g.write_char(U'b'); g.write_char(U'c'); g.write_char(U'd'); g.write_char(U'e');
     g.resize(3, 3);
     CHECK(g.cols() == 3);
@@ -593,7 +595,7 @@ TEST_CASE("Grid — resize smaller truncates content", "[grid][resize]") {
 }
 
 TEST_CASE("Grid — resize clamps cursor to new bounds", "[grid][resize]") {
-    terminal_grid g(10, 10);
+    terminal_grid g(10, 10, k_test_scrollback);
     action a;
     a.type = action_type::move_cursor;
     a.payload = cursor_pos{7, 7};
@@ -604,7 +606,7 @@ TEST_CASE("Grid — resize clamps cursor to new bounds", "[grid][resize]") {
 }
 
 TEST_CASE("Grid — resize to zero", "[grid][resize][edge]") {
-    terminal_grid g(10, 10);
+    terminal_grid g(10, 10, k_test_scrollback);
     g.resize(0, 0);
     CHECK(g.cols() == 0);
     CHECK(g.rows() == 0);
@@ -613,7 +615,7 @@ TEST_CASE("Grid — resize to zero", "[grid][resize][edge]") {
 }
 
 TEST_CASE("Grid — resize preserves SGR colours", "[grid][resize]") {
-    terminal_grid g(4, 2);
+    terminal_grid g(4, 2, k_test_scrollback);
     // Set row 0 to red text on blue background.
     write_bytes(g, "\x1B[31m\x1B[44m");  // SGR red fg, blue bg
     g.write_char(U'A');
@@ -645,7 +647,7 @@ TEST_CASE("Grid — resize preserves SGR colours", "[grid][resize]") {
 }
 
 TEST_CASE("Grid — resize only rows (same cols)", "[grid][resize]") {
-    terminal_grid g(5, 3);
+    terminal_grid g(5, 3, k_test_scrollback);
     g.write_char(U'a'); g.write_char(U'b'); g.write_char(U'c');
     g.newline();  // (1, 0)
     g.write_char(U'd');
@@ -661,7 +663,7 @@ TEST_CASE("Grid — resize only rows (same cols)", "[grid][resize]") {
 }
 
 TEST_CASE("Grid — resize only cols (same rows)", "[grid][resize]") {
-    terminal_grid g(4, 3);
+    terminal_grid g(4, 3, k_test_scrollback);
     g.write_char(U'x'); g.write_char(U'y'); g.write_char(U'z');
     g.resize(6, 3);  // grow wider
     CHECK(g.cols() == 6);
@@ -677,7 +679,7 @@ TEST_CASE("Grid — resize only cols (same rows)", "[grid][resize]") {
 }
 
 TEST_CASE("Grid — resize from zero-size grid", "[grid][resize][edge]") {
-    terminal_grid g(0, 0);
+    terminal_grid g(0, 0, k_test_scrollback);
     g.resize(10, 5);
     CHECK(g.cols() == 10);
     CHECK(g.rows() == 5);
@@ -694,7 +696,7 @@ TEST_CASE("Grid — resize from zero-size grid", "[grid][resize][edge]") {
 TEST_CASE("Grid — resize truncates rows beyond copy_rows", "[grid][resize]") {
     // Use a 3×5 grid and only fill rows 0–3 (leave row 4 as buffer to
     // avoid auto-wrap-scroll corrupting the test).
-    terminal_grid g(3, 5);
+    terminal_grid g(3, 5, k_test_scrollback);
     // Place each row via CUP + exactly 3 characters (no auto-wrap trigger).
     write_bytes(g, "\x1B[1;1H");  write_bytes(g, "aaa");
     write_bytes(g, "\x1B[2;1H");  write_bytes(g, "bbb");
@@ -713,7 +715,7 @@ TEST_CASE("Grid — resize truncates rows beyond copy_rows", "[grid][resize]") {
 }
 
 TEST_CASE("Grid — write after resize works correctly", "[grid][resize]") {
-    terminal_grid g(5, 3);
+    terminal_grid g(5, 3, k_test_scrollback);
     g.resize(10, 5);
     // Write to a position that was outside the old grid.
     write_bytes(g, "\x1B[3;8H");  // CUP to (2, 7)
@@ -732,7 +734,7 @@ TEST_CASE("Grid — write after resize works correctly", "[grid][resize]") {
 }
 
 TEST_CASE("Grid — resize preserves render_cells output", "[grid][resize]") {
-    terminal_grid g(3, 2);
+    terminal_grid g(3, 2, k_test_scrollback);
     g.write_char(U'a'); g.write_char(U'b');
     g.resize(5, 3);
     auto const rc = g.render_cells();
@@ -750,7 +752,7 @@ TEST_CASE("Grid — resize preserves render_cells output", "[grid][resize]") {
 // ===========================================================================
 
 TEST_CASE("Grid — write_bytes with CUP positions cursor", "[grid][integration]") {
-    terminal_grid g(10, 10);
+    terminal_grid g(10, 10, k_test_scrollback);
     write_bytes(g, "\x1B[5;8H");
     // 0-based: row 4, col 7
     CHECK(g.cursor_row() == 4);
@@ -758,7 +760,7 @@ TEST_CASE("Grid — write_bytes with CUP positions cursor", "[grid][integration]
 }
 
 TEST_CASE("Grid — write_bytes with CUU/CUD/CUF/CUB", "[grid][integration]") {
-    terminal_grid g(10, 10);
+    terminal_grid g(10, 10, k_test_scrollback);
     // Start at (5,5)
     write_bytes(g, "\x1B[6;6H");  // 0-based: (5,5)
     write_bytes(g, "\x1B[2A");    // CUU 2 → row 3
@@ -776,7 +778,7 @@ TEST_CASE("Grid — write_bytes with CUU/CUD/CUF/CUB", "[grid][integration]") {
 // ===========================================================================
 
 TEST_CASE("Grid — write_char on 0x0 grid does not crash", "[grid][edge]") {
-    terminal_grid g(0, 0);
+    terminal_grid g(0, 0, k_test_scrollback);
     // This exercises the guard `cursor_col_ < cols_` (0 < 0 = false) and
     // the wrap/scroll path.  The only requirement is that it doesn't crash.
     g.write_char(U'a');
@@ -788,7 +790,7 @@ TEST_CASE("Grid — write_char on 0x0 grid does not crash", "[grid][edge]") {
 // ===========================================================================
 
 TEST_CASE("Grid — erase_display mode 0 clears from cursor to end", "[grid][erase]") {
-    terminal_grid g(5, 3);
+    terminal_grid g(5, 3, k_test_scrollback);
     // Fill rows with 'X' using explicit CUP positioning.
     write_bytes(g, "\x1B[1;1HXXXXX");  // row 0
     write_bytes(g, "\x1B[2;1HXXXXX");  // row 1
@@ -821,7 +823,7 @@ TEST_CASE("Grid — erase_display mode 0 clears from cursor to end", "[grid][era
 }
 
 TEST_CASE("Grid — erase_display mode 1 clears from beginning to cursor", "[grid][erase]") {
-    terminal_grid g(5, 3);
+    terminal_grid g(5, 3, k_test_scrollback);
     // Fill rows with 'X' using explicit CUP positioning to avoid
     // auto-wrap/scroll corrupting the last row.
     write_bytes(g, "\x1B[1;1HXXXXX");  // row 0: 5 X's
@@ -852,7 +854,7 @@ TEST_CASE("Grid — erase_display mode 1 clears from beginning to cursor", "[gri
 }
 
 TEST_CASE("Grid — erase_display mode 2 clears entire screen", "[grid][erase]") {
-    terminal_grid g(5, 3);
+    terminal_grid g(5, 3, k_test_scrollback);
     // Fill with 'X' using CUP + write_bytes.
     write_bytes(g, "\x1B[1;1HXXXXX");
     write_bytes(g, "\x1B[2;1HXXXXX");
@@ -870,7 +872,7 @@ TEST_CASE("Grid — erase_display mode 2 clears entire screen", "[grid][erase]")
 }
 
 TEST_CASE("Grid — erase_display does not move cursor", "[grid][erase]") {
-    terminal_grid g(5, 3);
+    terminal_grid g(5, 3, k_test_scrollback);
     action mv;
     mv.type = action_type::move_cursor;
     mv.payload = cursor_pos{2, 3};
@@ -890,7 +892,7 @@ TEST_CASE("Grid — erase_display does not move cursor", "[grid][erase]") {
 // ===========================================================================
 
 TEST_CASE("Grid — erase_line mode 0 clears from cursor to end of line", "[grid][erase]") {
-    terminal_grid g(5, 3);
+    terminal_grid g(5, 3, k_test_scrollback);
     // Fill row 1 with 'X'.
     for (uint32_t c = 0; c < 5; ++c) {
         action mv;
@@ -924,7 +926,7 @@ TEST_CASE("Grid — erase_line mode 0 clears from cursor to end of line", "[grid
 }
 
 TEST_CASE("Grid — erase_line mode 1 clears from beginning to cursor", "[grid][erase]") {
-    terminal_grid g(5, 3);
+    terminal_grid g(5, 3, k_test_scrollback);
     for (uint32_t c = 0; c < 5; ++c) {
         action mv;
         mv.type = action_type::move_cursor;
@@ -950,7 +952,7 @@ TEST_CASE("Grid — erase_line mode 1 clears from beginning to cursor", "[grid][
 }
 
 TEST_CASE("Grid — erase_line mode 2 clears entire line", "[grid][erase]") {
-    terminal_grid g(5, 3);
+    terminal_grid g(5, 3, k_test_scrollback);
     // Fill row 1 with 'X' using write_bytes (explicit positioning avoids
     // auto-wrap moving the cursor off the row).
     write_bytes(g, "\x1B[2;1H");  // CUP to row 2, col 1 (0-based: 1, 0)
@@ -975,7 +977,7 @@ TEST_CASE("Grid — erase_line mode 2 clears entire line", "[grid][erase]") {
 }
 
 TEST_CASE("Grid — erase_line does not move cursor", "[grid][erase]") {
-    terminal_grid g(5, 3);
+    terminal_grid g(5, 3, k_test_scrollback);
     action mv;
     mv.type = action_type::move_cursor;
     mv.payload = cursor_pos{1, 3};
@@ -995,7 +997,7 @@ TEST_CASE("Grid — erase_line does not move cursor", "[grid][erase]") {
 // ===========================================================================
 
 TEST_CASE("Grid — erase_display on zero-size grid does not crash", "[grid][erase][edge]") {
-    terminal_grid g(0, 0);
+    terminal_grid g(0, 0, k_test_scrollback);
     action ed;
     ed.type = action_type::erase_display;
     ed.payload = uint32_t{2};
@@ -1004,7 +1006,7 @@ TEST_CASE("Grid — erase_display on zero-size grid does not crash", "[grid][era
 }
 
 TEST_CASE("Grid — erase_line on zero-size grid does not crash", "[grid][erase][edge]") {
-    terminal_grid g(0, 0);
+    terminal_grid g(0, 0, k_test_scrollback);
     action el;
     el.type = action_type::erase_line;
     el.payload = uint32_t{2};
@@ -1013,7 +1015,7 @@ TEST_CASE("Grid — erase_line on zero-size grid does not crash", "[grid][erase]
 }
 
 TEST_CASE("Grid — erase_display mode 3 treated as mode 2", "[grid][erase]") {
-    terminal_grid g(3, 2);
+    terminal_grid g(3, 2, k_test_scrollback);
     // Fill with 'X' using CUP.
     write_bytes(g, "\x1B[1;1HXXX");
     write_bytes(g, "\x1B[2;1HXXX");
@@ -1029,7 +1031,7 @@ TEST_CASE("Grid — erase_display mode 3 treated as mode 2", "[grid][erase]") {
 }
 
 TEST_CASE("Grid — erase uses default colours", "[grid][erase]") {
-    terminal_grid g(5, 3);
+    terminal_grid g(5, 3, k_test_scrollback);
     // Set a cell with non-default colours via SGR, then erase.
     write_bytes(g, "\x1B[31m");  // SGR red fg
     g.write_char(U'Y');           // at (0,0) with red fg
@@ -1053,7 +1055,7 @@ TEST_CASE("Grid — erase uses default colours", "[grid][erase]") {
 }
 
 TEST_CASE("Grid — erase_display via write_bytes (integration)", "[grid][erase][integration]") {
-    terminal_grid g(5, 3);
+    terminal_grid g(5, 3, k_test_scrollback);
     // Fill with 'X' using CUP.
     write_bytes(g, "\x1B[1;1HXXXXX");
     write_bytes(g, "\x1B[2;1HXXXXX");
@@ -1072,7 +1074,7 @@ TEST_CASE("Grid — erase_display via write_bytes (integration)", "[grid][erase]
 // ===========================================================================
 
 TEST_CASE("Grid — default scroll region is full screen", "[grid][scroll_region]") {
-    terminal_grid g(10, 5);
+    terminal_grid g(10, 5, k_test_scrollback);
     // Use CUP to place test content avoiding auto-wrap at the bottom.
     write_bytes(g, "\x1B[1;1H"); write_bytes(g, "row0");
     write_bytes(g, "\x1B[5;1H"); write_bytes(g, "row4");
@@ -1093,7 +1095,7 @@ TEST_CASE("Grid — default scroll region is full screen", "[grid][scroll_region
 }
 
 TEST_CASE("Grid — set_scroll_region with valid params", "[grid][scroll_region]") {
-    terminal_grid g(10, 10);
+    terminal_grid g(10, 10, k_test_scrollback);
     g.set_scroll_region(3, 8);  // 1-based: rows 3-8 (0-based: 2-7)
     // Cursor should move to home (0, 0).
     CHECK(g.cursor_row() == 0);
@@ -1101,7 +1103,7 @@ TEST_CASE("Grid — set_scroll_region with valid params", "[grid][scroll_region]
 }
 
 TEST_CASE("Grid — set_scroll_region top > bottom is ignored", "[grid][scroll_region]") {
-    terminal_grid g(10, 10);
+    terminal_grid g(10, 10, k_test_scrollback);
     // Fill with 'X' via CUP.
     write_bytes(g, "\x1B[1;1HXXXXXXXXXX");
     write_bytes(g, "\x1B[2;1HYYYYYYYYYY");
@@ -1119,7 +1121,7 @@ TEST_CASE("Grid — set_scroll_region top > bottom is ignored", "[grid][scroll_r
 }
 
 TEST_CASE("Grid — set_scroll_region with top > rows is ignored", "[grid][scroll_region]") {
-    terminal_grid g(10, 5);
+    terminal_grid g(10, 5, k_test_scrollback);
 
     // Move cursor away from home so we can verify the call is a no-op.
     action mv;
@@ -1138,7 +1140,7 @@ TEST_CASE("Grid — set_scroll_region with top > rows is ignored", "[grid][scrol
 }
 
 TEST_CASE("Grid — set_scroll_region bottom > rows clamped", "[grid][scroll_region]") {
-    terminal_grid g(10, 5);
+    terminal_grid g(10, 5, k_test_scrollback);
     g.set_scroll_region(1, 999);  // bottom clamped to 5 → region 1-5, cursor home
     // Cursor at (0,0). Write on row 0 via CUP.
     write_bytes(g, "\x1B[1;1H"); write_bytes(g, "HEADER");
@@ -1155,7 +1157,7 @@ TEST_CASE("Grid — set_scroll_region bottom > rows clamped", "[grid][scroll_reg
 }
 
 TEST_CASE("Grid — set_scroll_region 0;0 resets to full screen", "[grid][scroll_region]") {
-    terminal_grid g(10, 10);
+    terminal_grid g(10, 10, k_test_scrollback);
     // First set a sub-region.
     g.set_scroll_region(3, 8);
     // Then reset.
@@ -1176,7 +1178,7 @@ TEST_CASE("Grid — set_scroll_region 0;0 resets to full screen", "[grid][scroll
 // ===========================================================================
 
 TEST_CASE("Grid — newline at bottom margin scrolls region, header stays", "[grid][scroll_region][newline]") {
-    terminal_grid g(10, 5);
+    terminal_grid g(10, 5, k_test_scrollback);
     // Fill with labels using CUP. Write fewer chars to avoid auto-wrap.
     write_bytes(g, "\x1B[1;1H"); write_bytes(g, "HDR");
     write_bytes(g, "\x1B[2;1H"); write_bytes(g, "r1");
@@ -1212,7 +1214,7 @@ TEST_CASE("Grid — newline at bottom margin scrolls region, header stays", "[gr
 }
 
 TEST_CASE("Grid — newline above bottom margin just advances", "[grid][scroll_region][newline]") {
-    terminal_grid g(10, 5);
+    terminal_grid g(10, 5, k_test_scrollback);
     g.set_scroll_region(1, 4);  // rows 1-4 (0-based: 0-3)
     // Cursor is at home (0,0) after set_scroll_region.
     g.newline();  // cursor was at (0,0), which is the bottom margin!
@@ -1227,7 +1229,7 @@ TEST_CASE("Grid — newline above bottom margin just advances", "[grid][scroll_r
 // ===========================================================================
 
 TEST_CASE("Grid — write_char auto-wrap respects scroll region", "[grid][scroll_region][write_char]") {
-    terminal_grid g(3, 5);  // 5 rows to avoid bottom-row auto-scroll
+    terminal_grid g(3, 5, k_test_scrollback);  // 5 rows to avoid bottom-row auto-scroll
     g.set_scroll_region(2, 3);  // rows 2-3 (0-based: 1-2)
     // Cursor is at home (0,0).
 
@@ -1255,7 +1257,7 @@ TEST_CASE("Grid — write_char auto-wrap respects scroll region", "[grid][scroll
 // ===========================================================================
 
 TEST_CASE("Grid — IL inserts blank line at cursor within region", "[grid][il]") {
-    terminal_grid g(5, 5);
+    terminal_grid g(5, 5, k_test_scrollback);
     // Fill with letters using CUP + exactly 4 write_char calls to avoid
     // auto-wrap at the bottom row triggering scroll.
     write_bytes(g, "\x1B[1;1H"); write_bytes(g, "AAAA");
@@ -1289,7 +1291,7 @@ TEST_CASE("Grid — IL inserts blank line at cursor within region", "[grid][il]"
 }
 
 TEST_CASE("Grid — IL count clamped to region boundary", "[grid][il]") {
-    terminal_grid g(5, 5);
+    terminal_grid g(5, 5, k_test_scrollback);
     // Fill rows 2-4 (0-based: 1-3).
     write_bytes(g, "\x1B[2;1H"); write_bytes(g, "BBBBB");
     write_bytes(g, "\x1B[3;1H"); write_bytes(g, "CCCCC");
@@ -1314,7 +1316,7 @@ TEST_CASE("Grid — IL count clamped to region boundary", "[grid][il]") {
 }
 
 TEST_CASE("Grid — IL ignored when cursor outside scroll region (above)", "[grid][il][edge]") {
-    terminal_grid g(5, 5);
+    terminal_grid g(5, 5, k_test_scrollback);
     write_bytes(g, "\x1B[1;1H"); write_bytes(g, "AAAAA");
     write_bytes(g, "\x1B[2;1H"); write_bytes(g, "BBBBB");
 
@@ -1331,7 +1333,7 @@ TEST_CASE("Grid — IL ignored when cursor outside scroll region (above)", "[gri
 }
 
 TEST_CASE("Grid — IL ignored when cursor outside scroll region (below)", "[grid][il][edge]") {
-    terminal_grid g(5, 5);
+    terminal_grid g(5, 5, k_test_scrollback);
     write_bytes(g, "\x1B[1;1H"); write_bytes(g, "AAAAA");
 
     // Set scroll region to rows 1-2 (0-based: 0-1).
@@ -1350,7 +1352,7 @@ TEST_CASE("Grid — IL ignored when cursor outside scroll region (below)", "[gri
 }
 
 TEST_CASE("Grid — IL cursor col resets to 0", "[grid][il]") {
-    terminal_grid g(10, 5);
+    terminal_grid g(10, 5, k_test_scrollback);
     action mv;
     mv.type = action_type::move_cursor;
     mv.payload = cursor_pos{2, 5};
@@ -1365,7 +1367,7 @@ TEST_CASE("Grid — IL cursor col resets to 0", "[grid][il]") {
 // ===========================================================================
 
 TEST_CASE("Grid — DL deletes line at cursor within region", "[grid][dl]") {
-    terminal_grid g(5, 5);
+    terminal_grid g(5, 5, k_test_scrollback);
     // Fill with letters using CUP to avoid auto-wrap at bottom.
     write_bytes(g, "\x1B[1;1H"); write_bytes(g, "AAAA");
     write_bytes(g, "\x1B[2;1H"); write_bytes(g, "BBBB");
@@ -1397,7 +1399,7 @@ TEST_CASE("Grid — DL deletes line at cursor within region", "[grid][dl]") {
 }
 
 TEST_CASE("Grid — DL ignored when cursor outside scroll region", "[grid][dl][edge]") {
-    terminal_grid g(5, 5);
+    terminal_grid g(5, 5, k_test_scrollback);
     write_bytes(g, "\x1B[1;1H"); write_bytes(g, "AAAAA");
     write_bytes(g, "\x1B[3;1H"); write_bytes(g, "CCCCC");
 
@@ -1417,7 +1419,7 @@ TEST_CASE("Grid — DL ignored when cursor outside scroll region", "[grid][dl][e
 }
 
 TEST_CASE("Grid — DL cursor col resets to 0", "[grid][dl]") {
-    terminal_grid g(10, 5);
+    terminal_grid g(10, 5, k_test_scrollback);
     action mv;
     mv.type = action_type::move_cursor;
     mv.payload = cursor_pos{2, 5};
@@ -1432,7 +1434,7 @@ TEST_CASE("Grid — DL cursor col resets to 0", "[grid][dl]") {
 // ===========================================================================
 
 TEST_CASE("Grid — SU full screen pushes to scrollback", "[grid][su]") {
-    terminal_grid g(5, 3);
+    terminal_grid g(5, 3, k_test_scrollback);
     // Use CUP to avoid auto-wrap at bottom.
     write_bytes(g, "\x1B[1;1H"); write_bytes(g, "AAAA");
     write_bytes(g, "\x1B[2;1H"); write_bytes(g, "BBBB");
@@ -1454,7 +1456,7 @@ TEST_CASE("Grid — SU full screen pushes to scrollback", "[grid][su]") {
 }
 
 TEST_CASE("Grid — SU sub-region does not affect scrollback", "[grid][su]") {
-    terminal_grid g(5, 5);
+    terminal_grid g(5, 5, k_test_scrollback);
     // Use CUP to avoid auto-wrap at bottom.
     write_bytes(g, "\x1B[1;1H"); write_bytes(g, "AAAA");
     write_bytes(g, "\x1B[2;1H"); write_bytes(g, "BBBB");
@@ -1485,7 +1487,7 @@ TEST_CASE("Grid — SU sub-region does not affect scrollback", "[grid][su]") {
 // ===========================================================================
 
 TEST_CASE("Grid — SD full screen inserts blanks at top", "[grid][sd]") {
-    terminal_grid g(5, 3);
+    terminal_grid g(5, 3, k_test_scrollback);
     // Use CUP to avoid auto-wrap at bottom.
     write_bytes(g, "\x1B[1;1H"); write_bytes(g, "AAAA");
     write_bytes(g, "\x1B[2;1H"); write_bytes(g, "BBBB");
@@ -1503,7 +1505,7 @@ TEST_CASE("Grid — SD full screen inserts blanks at top", "[grid][sd]") {
 }
 
 TEST_CASE("Grid — SD sub-region does not affect outside rows", "[grid][sd]") {
-    terminal_grid g(5, 5);
+    terminal_grid g(5, 5, k_test_scrollback);
     // Use CUP to avoid auto-wrap at bottom.
     write_bytes(g, "\x1B[1;1H"); write_bytes(g, "AAAA");
     write_bytes(g, "\x1B[2;1H"); write_bytes(g, "BBBB");
@@ -1534,7 +1536,7 @@ TEST_CASE("Grid — SD sub-region does not affect outside rows", "[grid][sd]") {
 // ===========================================================================
 
 TEST_CASE("Grid — IL/DL/SU/SD on zero-size grid does not crash", "[grid][lineops][edge]") {
-    terminal_grid g(0, 0);
+    terminal_grid g(0, 0, k_test_scrollback);
     g.insert_lines(1);
     g.delete_lines(1);
     g.scroll_page_up(1);
@@ -1544,7 +1546,7 @@ TEST_CASE("Grid — IL/DL/SU/SD on zero-size grid does not crash", "[grid][lineo
 }
 
 TEST_CASE("Grid — scroll region preserved across resize", "[grid][scroll_region][resize]") {
-    terminal_grid g(10, 10);
+    terminal_grid g(10, 10, k_test_scrollback);
     g.set_scroll_region(3, 8);
     g.resize(20, 5);
     // Resize resets scroll region to full screen.
@@ -1559,7 +1561,7 @@ TEST_CASE("Grid — scroll region preserved across resize", "[grid][scroll_regio
 }
 
 TEST_CASE("Grid — integration DECSTBM + newline via write_bytes", "[grid][scroll_region][integration]") {
-    terminal_grid g(10, 8);  // extra rows to avoid auto-wrap issues
+    terminal_grid g(10, 8, k_test_scrollback);  // extra rows to avoid auto-wrap issues
     write_bytes(g, "\x1B[1;1H"); write_bytes(g, "HEADER");
     // Set scroll region rows 2-5 (0-based: 1-4)
     write_bytes(g, "\x1B[2;5r");
@@ -1585,7 +1587,7 @@ TEST_CASE("Grid — integration DECSTBM + newline via write_bytes", "[grid][scro
 // ===========================================================================
 
 TEST_CASE("Grid — ICH inserts blanks and shifts cells right", "[grid][task14][ich]") {
-    terminal_grid g(5, 3);
+    terminal_grid g(5, 3, k_test_scrollback);
     // Fill row 0 with "ABCDE".
     write_bytes(g, "ABCDE");
 
@@ -1610,7 +1612,7 @@ TEST_CASE("Grid — ICH inserts blanks and shifts cells right", "[grid][task14][
 }
 
 TEST_CASE("Grid — ICH count clamped to remaining columns", "[grid][task14][ich]") {
-    terminal_grid g(5, 3);
+    terminal_grid g(5, 3, k_test_scrollback);
     write_bytes(g, "ABCDE");
 
     action mv;
@@ -1632,7 +1634,7 @@ TEST_CASE("Grid — ICH count clamped to remaining columns", "[grid][task14][ich
 }
 
 TEST_CASE("Grid — ICH at last column blanks that cell", "[grid][task14][ich]") {
-    terminal_grid g(5, 3);
+    terminal_grid g(5, 3, k_test_scrollback);
     write_bytes(g, "ABCDE");
 
     action mv;
@@ -1652,7 +1654,7 @@ TEST_CASE("Grid — ICH at last column blanks that cell", "[grid][task14][ich]")
 }
 
 TEST_CASE("Grid — ICH on zero-size grid does nothing", "[grid][task14][ich]") {
-    terminal_grid g(0, 0);
+    terminal_grid g(0, 0, k_test_scrollback);
     // Should not crash.
     g.insert_chars(3);
     CHECK(g.cols() == 0);
@@ -1660,7 +1662,7 @@ TEST_CASE("Grid — ICH on zero-size grid does nothing", "[grid][task14][ich]") 
 }
 
 TEST_CASE("Grid — ICH cursor unchanged", "[grid][task14][ich]") {
-    terminal_grid g(10, 5);
+    terminal_grid g(10, 5, k_test_scrollback);
     action mv;
     mv.type = action_type::move_cursor;
     mv.payload = cursor_pos{2, 3};
@@ -1677,7 +1679,7 @@ TEST_CASE("Grid — ICH cursor unchanged", "[grid][task14][ich]") {
 // ===========================================================================
 
 TEST_CASE("Grid — DCH deletes cells and shifts left", "[grid][task14][dch]") {
-    terminal_grid g(5, 3);
+    terminal_grid g(5, 3, k_test_scrollback);
     // Fill row 0 with "ABCDE".
     write_bytes(g, "ABCDE");
 
@@ -1702,7 +1704,7 @@ TEST_CASE("Grid — DCH deletes cells and shifts left", "[grid][task14][dch]") {
 }
 
 TEST_CASE("Grid — DCH count clamped to remaining columns", "[grid][task14][dch]") {
-    terminal_grid g(5, 3);
+    terminal_grid g(5, 3, k_test_scrollback);
     write_bytes(g, "ABCDE");
 
     action mv;
@@ -1724,7 +1726,7 @@ TEST_CASE("Grid — DCH count clamped to remaining columns", "[grid][task14][dch
 }
 
 TEST_CASE("Grid — DCH at last column blanks that cell", "[grid][task14][dch]") {
-    terminal_grid g(5, 3);
+    terminal_grid g(5, 3, k_test_scrollback);
     write_bytes(g, "ABCDE");
 
     action mv;
@@ -1744,7 +1746,7 @@ TEST_CASE("Grid — DCH at last column blanks that cell", "[grid][task14][dch]")
 }
 
 TEST_CASE("Grid — DCH cursor unchanged", "[grid][task14][dch]") {
-    terminal_grid g(10, 5);
+    terminal_grid g(10, 5, k_test_scrollback);
     action mv;
     mv.type = action_type::move_cursor;
     mv.payload = cursor_pos{2, 3};
@@ -1761,7 +1763,7 @@ TEST_CASE("Grid — DCH cursor unchanged", "[grid][task14][dch]") {
 // ===========================================================================
 
 TEST_CASE("Grid — ECH blanks cells in place", "[grid][task14][ech]") {
-    terminal_grid g(5, 3);
+    terminal_grid g(5, 3, k_test_scrollback);
     write_bytes(g, "ABCDE");
 
     action mv;
@@ -1784,7 +1786,7 @@ TEST_CASE("Grid — ECH blanks cells in place", "[grid][task14][ech]") {
 }
 
 TEST_CASE("Grid — ECH count clamped to remaining columns", "[grid][task14][ech]") {
-    terminal_grid g(5, 3);
+    terminal_grid g(5, 3, k_test_scrollback);
     write_bytes(g, "ABCDE");
 
     action mv;
@@ -1806,7 +1808,7 @@ TEST_CASE("Grid — ECH count clamped to remaining columns", "[grid][task14][ech
 }
 
 TEST_CASE("Grid — ECH cursor unchanged", "[grid][task14][ech]") {
-    terminal_grid g(10, 5);
+    terminal_grid g(10, 5, k_test_scrollback);
     action mv;
     mv.type = action_type::move_cursor;
     mv.payload = cursor_pos{2, 3};
@@ -1823,7 +1825,7 @@ TEST_CASE("Grid — ECH cursor unchanged", "[grid][task14][ech]") {
 // ===========================================================================
 
 TEST_CASE("Grid — wide char occupies two cells", "[grid][task15][wide]") {
-    terminal_grid g(10, 5);
+    terminal_grid g(10, 5, k_test_scrollback);
     g.write_char(0x4E2D);  // 中 (CJK, width 2)
     // Cell (0,0) = 中 with wide_lead kind
     CHECK(g.cell(0, 0).codepoint == 0x4E2D);
@@ -1838,7 +1840,7 @@ TEST_CASE("Grid — wide char occupies two cells", "[grid][task15][wide]") {
 TEST_CASE("Grid — wide char at last column wraps", "[grid][task15][wide]") {
     // 5-column grid, fill first 4 cols, then write wide char at col 4
     // (col 4 is last column) → should wrap to row 1, cols 0-1
-    terminal_grid g(5, 5);
+    terminal_grid g(5, 5, k_test_scrollback);
     g.write_char(U'A'); g.write_char(U'A'); g.write_char(U'A'); g.write_char(U'A');
     CHECK(g.cursor_col() == 4);
     CHECK(g.cursor_row() == 0);
@@ -1853,7 +1855,7 @@ TEST_CASE("Grid — wide char at last column wraps", "[grid][task15][wide]") {
 
 TEST_CASE("Grid — wide char at second-to-last column fits", "[grid][task15][wide]") {
     // 5-column grid, fill 3 cols, wide char at col 3 (second-to-last) → fits
-    terminal_grid g(5, 5);
+    terminal_grid g(5, 5, k_test_scrollback);
     g.write_char(U'A'); g.write_char(U'A'); g.write_char(U'A');  // cols 0-2
     CHECK(g.cursor_col() == 3);
 
@@ -1867,7 +1869,7 @@ TEST_CASE("Grid — wide char at second-to-last column fits", "[grid][task15][wi
 }
 
 TEST_CASE("Grid — normal char after wide char placed correctly", "[grid][task15][wide]") {
-    terminal_grid g(10, 5);
+    terminal_grid g(10, 5, k_test_scrollback);
     g.write_char(0x4E2D);  // wide, cols 0-1
     g.write_char(U'A');    // col 2
     CHECK(g.cell(0, 2).codepoint == U'A');
@@ -1875,7 +1877,7 @@ TEST_CASE("Grid — normal char after wide char placed correctly", "[grid][task1
 }
 
 TEST_CASE("Grid — render_cells marks wide and continuation", "[grid][task15][wide]") {
-    terminal_grid g(10, 5);
+    terminal_grid g(10, 5, k_test_scrollback);
     g.write_char(0x4E2D);
     auto cells = g.render_cells();
     // Cell 0: codepoint = 0x4E2D, kind is wide_lead
@@ -1886,7 +1888,7 @@ TEST_CASE("Grid — render_cells marks wide and continuation", "[grid][task15][w
 }
 
 TEST_CASE("Grid — wide char fg/bg colours propagated to both cells", "[grid][task15][wide]") {
-    terminal_grid g(10, 5);
+    terminal_grid g(10, 5, k_test_scrollback);
     // Set red fg via SGR then write a wide char.
     write_bytes(g, "\x1B[31m");  // red fg
     g.write_char(0x4E2D);
@@ -1901,7 +1903,7 @@ TEST_CASE("Grid — wide char fg/bg colours propagated to both cells", "[grid][t
 // ===========================================================================
 
 TEST_CASE("Grid — combining acute after 'e' composes to é", "[grid][task15][combining]") {
-    terminal_grid g(10, 5);
+    terminal_grid g(10, 5, k_test_scrollback);
     g.write_char(U'e');
     g.write_char(0x0301);  // combining acute accent
     // Cursor stays at col 1 (combining char is zero-width)
@@ -1911,14 +1913,14 @@ TEST_CASE("Grid — combining acute after 'e' composes to é", "[grid][task15][c
 }
 
 TEST_CASE("Grid — combining char at column 0 is width 1", "[grid][task15][combining]") {
-    terminal_grid g(10, 5);
+    terminal_grid g(10, 5, k_test_scrollback);
     g.write_char(0x0301);  // combining acute at col 0
     CHECK(g.cursor_col() == 1);  // treated as width 1
     CHECK(g.cell(0, 0).codepoint == 0x0301);
 }
 
 TEST_CASE("Grid — combining char after space is width 1", "[grid][task15][combining]") {
-    terminal_grid g(10, 5);
+    terminal_grid g(10, 5, k_test_scrollback);
     g.write_char(U' ');  // space
     g.write_char(0x0301);  // combining acute
     CHECK(g.cursor_col() == 2);  // treated as width 1
@@ -1926,7 +1928,7 @@ TEST_CASE("Grid — combining char after space is width 1", "[grid][task15][comb
 }
 
 TEST_CASE("Grid — combining char after wide_tail is width 1", "[grid][task15][combining]") {
-    terminal_grid g(10, 5);
+    terminal_grid g(10, 5, k_test_scrollback);
     g.write_char(0x4E2D);  // wide, cols 0-1; col 1 is wide_tail
     // Write combining at col 2 (advances from col 2 normally).
     g.write_char(0x0301);

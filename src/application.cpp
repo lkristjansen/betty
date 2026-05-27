@@ -198,7 +198,8 @@ auto make_application() -> std::expected<application, std::error_code> {
   window.set_min_window_size(min_win_width, min_win_height);
 
   // 6. Create terminal session.
-  terminal::terminal_session session(cols, rows, std::move(shell));
+  constexpr uint32_t k_default_scrollback = 10000;
+  terminal::terminal_session session(cols, rows, k_default_scrollback, std::move(shell));
 
   return application{std::move(window), std::move(renderer_ctx), std::move(session)};
 }

@@ -35,6 +35,7 @@ public:
   // If `shell` is nullopt, a "Failed to create shell process" message is
   // written to the grid.
   terminal_session(uint32_t cols, uint32_t rows,
+                   uint32_t scrollback_max_lines,
                    std::optional<platform::shell> shell);
 
   // --- Input/output ---------------------------------------------------------

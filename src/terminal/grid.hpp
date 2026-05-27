@@ -26,7 +26,7 @@ class terminal_grid {
 public:
   // Create a grid of `cols` × `rows` cells, all initialised to space.
   // Cursor starts at (0, 0).
-  terminal_grid(uint32_t cols, uint32_t rows);
+  terminal_grid(uint32_t cols, uint32_t rows, uint32_t scrollback_max_lines);
 
   // --- Dimensions -----------------------------------------------------------
 
@@ -104,9 +104,6 @@ public:
 
   // --- Scrollback -----------------------------------------------------------
 
-  // Maximum number of off-screen lines retained.
-  static constexpr uint32_t k_scrollback_max = 10000;
-
   // Scroll the viewport up/down by `delta` rows.
   // Positive delta = scroll back (up), negative = scroll forward (down).
   // Returns the new viewport scroll offset.
@@ -136,6 +133,7 @@ public:
 private:
   uint32_t cols_;
   uint32_t rows_;
+  uint32_t scrollback_max_lines_;
 
   scrollback_buffer buffer_;
   cursor_state cursor_;

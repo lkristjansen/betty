@@ -11,10 +11,11 @@ namespace betty::terminal {
 // construction
 // ===========================================================================
 
-terminal_grid::terminal_grid(uint32_t cols, uint32_t rows)
+terminal_grid::terminal_grid(uint32_t cols, uint32_t rows, uint32_t scrollback_max_lines)
   : cols_(cols)
   , rows_(rows)
-  , buffer_(cols, rows, k_scrollback_max)
+  , scrollback_max_lines_(scrollback_max_lines)
+  , buffer_(cols, rows, scrollback_max_lines)
   , cursor_() {
   if (rows > 0) {
     cursor_.reset_region(rows > 0 ? rows - 1 : 0);
@@ -643,7 +644,7 @@ auto terminal_grid::render_cells() -> std::span<const platform::render_cell> {
 void terminal_grid::resize(uint32_t new_cols, uint32_t new_rows) {
   if (new_cols == cols_ && new_rows == rows_) return;
 
-  buffer_.resize(new_cols, new_rows, k_scrollback_max);
+  buffer_.resize(new_cols, new_rows, scrollback_max_lines_);
 
   cols_ = new_cols;
   rows_ = new_rows;
